@@ -46,7 +46,7 @@ Build a working single-host demo in small, independently testable stages. Do not
 - [x] Applied that policy to `compose.yaml` (`./.data/postgres`), `.gitignore`, `.dockerignore`, and the architecture/README documentation. Static check: `docker compose config --quiet` passes and resolves the PostgreSQL source to `.data/postgres`.
 - [x] Runtime confirmation on G7: all three containers became healthy; PostgreSQL mount resolved inside the approved folder; container SQL and version checks passed after `docker compose down`/`up`.
 - [x] Repository foundation and Docker Compose.
-- [ ] Synthetic CRM API.
+- [x] Stage 1 synthetic CRM API: deterministic customer, vehicle, and sale fixtures (including one deliberate duplicate and one malformed customer), `GET /customers`, `/vehicles`, and `/sales` with a bounded pagination envelope, and `/health` unchanged. Verified with `.venv/Scripts/python.exe -m pytest tests/test_crm_api_resources.py` (21 passed), full `.venv/Scripts/python.exe -m pytest` (23 passed), and `docker compose config --quiet` (OK).
 - [ ] Data contracts and transforms.
 - [ ] PostgreSQL persistence.
 - [ ] ETL orchestration and pipeline API.

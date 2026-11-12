@@ -2,7 +2,7 @@
 
 A small, auditable integration demo with synthetic dealership data: a mock CRM API, a pipeline API that extracts and validates from it, PostgreSQL for persistence, and n8n for manual and scheduled runs. Everything runs on one host with Docker Compose.
 
-The repository is one Python codebase with **two FastAPI processes**. Stage 0 delivers the runnable foundation only: package skeleton, health endpoints, container image, Compose services, and tests. CRM data endpoints, persistence, and n8n arrive in later stages (see `docs/ROADMAP.md`).
+The repository is one Python codebase with **two FastAPI processes**. Stage 0 delivered the runnable foundation: package skeleton, health endpoints, container image, Compose services, and tests. Stage 1 adds deterministic synthetic CRM data with bounded pagination. Persistence, ETL, and n8n arrive in later stages (see `docs/ROADMAP.md`).
 
 ## Layout
 
@@ -39,25 +39,90 @@ Health responses: `{"status":"ok","service":"crm-api"}` and `{"status":"ok","ser
 - Database files live in `./.data/postgres` (bind-mounted to `/var/lib/postgresql/data`) and survive `docker compose down`. `docker compose down -v` does not remove a bind mount either. Remove that directory only after a deliberate backup, or when you intend a full reset.
 - Containers reach each other by Compose service name, for example `http://crm-api:8000` or host `postgres`.
 
-## Local development
+## CRM API
+
+`crm-api` serves deterministic synthetic data. Every collection is read-only and paginated:
+
+| Endpoint | Returns |
+|---|---|
+| `GET /customers` | Customers, including one deliberate duplicate row and one malformed row |
+| `GET /vehicles` | Vehicles with clearly synthetic `SYN…` VINs |
+| `GET /sales` | Sales referencing synthetic customers and vehicles |
+
+Query parameters:
+
+| Parameter | Default | Accepted values |
+|---|---|---|
+| `page` | `1` | Integer `>= 1` |
+| `page_size` | `3` | Integer `1`–`100` |
+
+All three endpoints return the same envelope:
+
+```json
+{
+  "items": [
+    {
+      "id": "CUST-0001",
+      "first_name": "Amara",
+      "last_name": "Nakamura",
+      "email": "amara.nakamura@example.test",
+      "phone": "+1-555-0101",
+      "city": "Springfield",
+      "created_at": "2024-01-05T09:00:00Z"
+    }
+  ],
+  "page": 1,
+  "page_size": 3,
+  "total": 7,
+  "total_pages": 3,
+  "next_page": 2
+}
+```
+
+`next_page` is `null` on the last page. A page beyond `total_pages` returns `200` with an empty `items` list and the collection's real `total` and `total_pages`. Values outside the bounds above return `422`.
 
 ```bash
-python -m venv .venv
-.venv/Scripts/python.exe -m pip install -e ".[dev]"   # Windows
-# .venv/bin/python -m pip install -e ".[dev]"         # Linux/macOS
-
-.venv/Scripts/python.exe -m pytest                    # full suite
-.venv/Scripts/python.exe -m uvicorn automotive_data_integration.crm_api.main:app --reload --port 8000
-.venv/Scripts/python.exe -m uvicorn automotive_data_integration.pipeline_api.main:app --reload --port 8001
+curl "http://127.0.0.1:8000/customers"
+curl "http://127.0.0.1:8000/vehicles?page=2&page_size=2"
+curl "http://127.0.0.1:8000/sales?page=1&page_size=3"
 ```
+
+Fixtures live in `src/automotive_data_integration/crm_api/fixtures.py`. All data is fictional: `.test` emails, reserved `555-01xx` phone numbers, and `SYN`-prefixed VINs. `CUST-0001` appears twice on purpose, and `CUST-9001` is intentionally malformed, so later stages can prove source deduplication and validation rejection against real API responses.
+
+## Local development
+
+```powershell
+# Keep venv bootstrap, pip cache, and temporary build files in this project.
+New-Item -ItemType Directory -Force .venv\tmp | Out-Null
+New-Item -ItemType Directory -Force .venv\pip-cache | Out-Null
+$env:TEMP = Join-Path (Get-Location) ".venv\tmp"
+$env:TMP = $env:TEMP
+$env:PIP_CACHE_DIR = Join-Path (Get-Location) ".venv\pip-cache"
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -e ".[dev]"
+```
+
+Linux/macOS alternative:
+
+```bash
+mkdir -p .venv/tmp .venv/pip-cache
+TMPDIR="$PWD/.venv/tmp" TEMP="$PWD/.venv/tmp" TMP="$PWD/.venv/tmp" PIP_CACHE_DIR="$PWD/.venv/pip-cache" python3 -m venv .venv
+TMPDIR="$PWD/.venv/tmp" TEMP="$PWD/.venv/tmp" TMP="$PWD/.venv/tmp" PIP_CACHE_DIR="$PWD/.venv/pip-cache" .venv/bin/python -m pip install -e ".[dev]"
+
+.venv/bin/python -m pytest
+.venv/bin/python -m uvicorn automotive_data_integration.crm_api.main:app --reload --port 8000
+.venv/bin/python -m uvicorn automotive_data_integration.pipeline_api.main:app --reload --port 8001
+```
+
+Use the matching `.venv` command for the current platform. On G7, run the application through Docker Compose instead of creating a host virtual environment.
 
 The console scripts `crm-api` and `pipeline-api` start the same apps using `APP_HOST` (default `0.0.0.0`) and `APP_PORT` (default `8000`).
 
 ## Tests
 
 ```bash
-.venv/Scripts/python.exe -m pytest tests/test_crm_api_health.py tests/test_pipeline_api_health.py  # focused
-.venv/Scripts/python.exe -m pytest                                                                # full
+.venv/Scripts/python.exe -m pytest tests/test_crm_api_health.py tests/test_crm_api_resources.py   # CRM API
+.venv/Scripts/python.exe -m pytest                                    # full
 docker compose run --rm crm-api pytest   # inside the image, no host packages needed
 ```
 
@@ -126,4 +191,4 @@ Docker image layers, container writable layers/logs, build cache, and network me
 
 - Single host only: no high availability, TLS, reverse proxy, or secret manager.
 - The image includes test dependencies so the G7 host can run tests in containers; production images would split runtime and test stages.
-- No CRM data endpoints, database schema, ETL logic, or n8n workflow yet.
+- CRM endpoints serve synthetic in-memory fixtures only; there is no database schema, ETL logic, or n8n workflow yet.
