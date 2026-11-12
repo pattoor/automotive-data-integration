@@ -12,6 +12,7 @@ htmlcov/
 .env.*
 !.env.example
 n8n/data/
+.data/
 .atl/
 *.log
 # Local AI runtime state

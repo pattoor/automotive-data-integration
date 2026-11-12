@@ -20,7 +20,11 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-automotive}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-automotive-local-dev}
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      # Bind mount, not a named volume: persistent project data stays visible
+      # under the G7 project folder instead of Docker's daemon-wide storage.
+      - type: bind
+        source: ./.data/postgres
+        target: /var/lib/postgresql/data
     healthcheck:
       test:
         - CMD-SHELL
@@ -60,6 +64,3 @@ services:
         condition: service_healthy
     healthcheck: *app-healthcheck
     restart: unless-stopped
-
-volumes:
-  postgres-data:

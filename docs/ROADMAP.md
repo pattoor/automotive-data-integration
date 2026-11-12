@@ -7,6 +7,7 @@ Build a working single-host demo in small, independently testable stages. Do not
 | Stage | Deliverable | Verification gate | Learning checkpoint |
 |---|---|---|---|
 | 0. Repository foundation | Git remote/feature branch, Python package skeleton, dependency configuration, `.env.example`, `.gitignore`, Dockerfile, Compose services, PostgreSQL health check, initial README setup instructions. | Validate Compose configuration; build the image; confirm all required containers become healthy. | Explain what Compose solves and how services discover each other on one host. |
+| 0b. Storage policy | PostgreSQL uses the project-relative bind mount `./.data/postgres` instead of a named volume; `.data/` is ignored by Git and the Docker build context; storage trade-off documented. | `docker compose config --quiet` passes and the resolved volume source is `./.data/postgres` (static check only where no daemon is available). | Explain why project data is visible in the project folder while Docker's image/container/network metadata stays in daemon-wide storage. |
 | 1. Synthetic CRM API | Deterministic customer, vehicle, and sale fixtures; JSON REST endpoints with bounded pagination; health endpoint. | Unit/API tests for page boundaries, empty pages, response shape, and deterministic fixtures. | Explain why the mock is a separate service and how pagination protects API consumers. |
 | 2. Data contracts and transforms | Pydantic entity schemas; normalization and batch duplicate detection; explicit handling of invalid records. | Unit tests for valid, malformed, duplicate, and normalized records. Run each test red before implementing its behavior. | Explain the boundary between normalization and validation, and why invalid records are quarantined. |
 | 3. PostgreSQL persistence | SQL schema and repository operations for entities, run summaries, and rejected records; foreign keys, unique CRM IDs, and UPSERTs. | Integration tests against real PostgreSQL for insert/update behavior, FK handling, and repeated writes. | Explain database-enforced idempotency, constraints, and the ORM alternative. |
@@ -24,6 +25,7 @@ Build a working single-host demo in small, independently testable stages. Do not
 - [ ] Each run has a queryable status and counts; logs are useful without leaking secrets.
 - [ ] Tests cover malformed input and idempotency; CI runs the automated checks.
 - [ ] `.env.example` documents configuration while `.env` and real secrets remain untracked.
+- [ ] Persistent project data lives under `.data/` in the project folder rather than in named volumes, and survives `docker compose down`.
 - [ ] Documentation lets a student explain service boundaries, data flow, failure handling, and trade-offs in an interview.
 
 ## Working rules
@@ -40,6 +42,9 @@ Build a working single-host demo in small, independently testable stages. Do not
 - [x] Confirmed the approved G7 project directory and Docker Compose runtime; project dependencies will run in containers, not on the host.
 - [x] Created the project-scoped G7 access skill and local virtual environment.
 - [x] Agreed on one repository with separate FastAPI service processes that can run together on one Compose host.
+- [x] Decided the storage policy: project data (PostgreSQL now, n8n state later) uses project-relative bind mounts under `.data/`; Docker image/container/network metadata stays in Docker's shared daemon storage because Compose cannot relocate it per project. No daemon reconfiguration and no global prune; sibling projects are untouched.
+- [x] Applied that policy to `compose.yaml` (`./.data/postgres`), `.gitignore`, `.dockerignore`, and the architecture/README documentation. Static check: `docker compose config --quiet` passes and resolves the PostgreSQL source to `.data/postgres`.
+- [ ] Runtime confirmation on G7 that PostgreSQL starts on the bind mount and that data survives `docker compose down` (requires the Docker daemon; not yet run).
 - [ ] Repository foundation and Docker Compose.
 - [ ] Synthetic CRM API.
 - [ ] Data contracts and transforms.

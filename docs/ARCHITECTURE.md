@@ -15,8 +15,8 @@ This project demonstrates a small, auditable data integration system using synth
 |---|---|---|
 | `crm-api` | Serve deterministic synthetic customers, vehicles, and sales as paginated REST resources. Include a small set of documented invalid/duplicate fixtures for demonstrations. | Called by `pipeline-api`; no database required. |
 | `pipeline-api` | Expose health and pipeline-run endpoints; coordinate extraction, transformation, validation, persistence, and run summaries. | Calls `crm-api`; writes to PostgreSQL. |
-| `postgres` | Persist accepted entities, pipeline run summaries, and rejected source records. | Private Compose network; persistent volume. |
-| `n8n` | Provide manual and scheduled triggers using an HTTP Request node. | Calls `pipeline-api`; keeps n8n state in its own persistent volume. |
+| `postgres` | Persist accepted entities, pipeline run summaries, and rejected source records. | Private Compose network; project-relative bind mount `./.data/postgres`. |
+| `n8n` | Provide manual and scheduled triggers using an HTTP Request node. | Calls `pipeline-api`; keeps n8n state in its own project-relative mount. |
 
 The two FastAPI applications live in one Python package and can use one Docker image with different startup commands. They are separate processes and containers at runtime, but remain one codebase and one Compose deployment.
 
@@ -54,6 +54,23 @@ The same `compose.yaml` runs all four services on a single Debian/Linux machine 
 
 The authoring checkout uses a repository-local `.venv`. On G7, the Compose image supplies Python dependencies; do not install project packages or system packages on the host.
 
+### Storage: where project data lives
+
+Persistent project data is bind-mounted into the repository, not stored in named volumes:
+
+- PostgreSQL data directory: `./.data/postgres` on the host, mounted at `/var/lib/postgresql/data`.
+- The future n8n state directory must also be project-relative (for example `./.data/n8n`) rather than a named volume.
+- `.data/` is ignored by Git and by the Docker build context, so database files are neither committed nor copied into the image.
+
+This is a deliberate trade-off rather than a complete relocation of Docker state:
+
+| Storage kind | Location | Why |
+|---|---|---|
+| Project data (database files, later n8n state) | Under `[private G7 project path]/.data/` | Visible and auditable; can be backed up separately alongside the project folder. `.data/` is not included in Git. |
+| Docker image layers, container writable layers/logs, build cache, network metadata | Docker's shared daemon storage (normally `/var/lib/docker`, global) | Compose cannot relocate these per project. Changing `data-root` or otherwise reconfiguring the daemon is a host-wide change and is explicitly out of scope for this project. |
+
+Consequences worth stating plainly: `docker compose down` does not touch bind-mounted data; `docker compose down -v` also does not, because it only removes named volumes. Data is deleted only by deliberately removing the project's `.data` directory after a backup or an intentional reset. Docker's own storage still grows from images, build cache, and containers, and reclaiming it is a host maintenance decision made outside this project — never through a global prune or daemon reconfiguration triggered here.
+
 ### Production boundary
 
 The mock CRM exists only for synthetic demo and test runs. A real deployment would configure the pipeline to call the employer's authorized CRM/API; the mock service would not be presented as a real source system. A single-host Compose deployment can suit a small, low-criticality installation, but it is a single point of failure and is not high availability.
@@ -66,6 +83,7 @@ Production hardening is deliberately outside the first implementation: TLS/rever
 |---|---|---|
 | One monorepo, two FastAPI services | Makes the source/consumer boundary real while keeping development and review simple. | One FastAPI process is simpler to start, but couples the simulated source and its consumer and hides the integration boundary. Separate repositories add coordination and deployment work without benefit at this scale. |
 | Docker Compose for all local services | Reproducible single-host setup and a realistic service network. | Running services directly on the host reduces container learning but makes setup less consistent. Kubernetes is excessive for a single-host portfolio demo. |
+| Bind mounts under `./.data/` for persistent data | Project data stays inside the approved G7 project folder, so it is visible and can be backed up separately alongside the repository folder. | Named Docker volumes hide data in daemon-wide storage and tie it to volume lifecycle commands. Relocating Docker's whole storage would require a global daemon change that affects every other project on the host, so image/container/network metadata stays where Docker manages it. |
 | PostgreSQL constraints and SQL UPSERT | Idempotency is enforced at the database boundary and remains visible to learners. | Application-only duplicate checks can race and are not a durable uniqueness guarantee. An ORM can be added later, but direct SQL keeps this small schema and upsert behavior explicit. |
 | Pydantic per record; Pandas only for useful batches | Clear validation errors and focused use of the requested data-frame tool. | Using Pandas for every step adds overhead; using only Python collections is simpler for tiny data but misses a useful batch-processing example. |
 | Synthetic fixtures, including documented bad records | Demonstrates validation and quarantine without personal or commercial data. | Live CRM credentials would make the demo unsafe, non-reproducible, and out of scope. |

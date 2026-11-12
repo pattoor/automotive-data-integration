@@ -14,6 +14,7 @@ The repository is one Python codebase with **two FastAPI processes**. Stage 0 de
 | `tests/` | API tests using FastAPI `TestClient` |
 | `compose.yaml` | Two APIs plus PostgreSQL (`postgres:16-alpine`) |
 | `Dockerfile` | One image, one package, two startup commands |
+| `.data/` | Local container data (PostgreSQL files; git-ignored) |
 
 ## Requirements
 
@@ -34,7 +35,7 @@ Health responses: `{"status":"ok","service":"crm-api"}` and `{"status":"ok","ser
 
 - Host ports bind to `127.0.0.1` only; PostgreSQL is not published.
 - `pipeline-api` starts only after `pg_isready` reports PostgreSQL healthy.
-- Data lives in the `postgres-data` volume and survives `docker compose down`. Use `docker compose down -v` only when you intend to delete it.
+- Database files live in `./.data/postgres` (bind-mounted to `/var/lib/postgresql/data`) and survive `docker compose down`. `docker compose down -v` does not remove a bind mount either. Remove that directory only after a deliberate backup, or when you intend a full reset.
 - Containers reach each other by Compose service name, for example `http://crm-api:8000` or host `postgres`.
 
 ## Local development
@@ -73,6 +74,22 @@ docker compose run --rm crm-api pytest
 ```
 
 Do not install Python or system packages on the host; the image supplies dependencies and test tooling.
+
+## Storage
+
+Persistent project data stays inside the repository folder, not in Docker's shared daemon storage:
+
+| Item | Host location | Container path |
+|---|---|---|
+| PostgreSQL data | `./.data/postgres` | `/var/lib/postgresql/data` |
+| n8n state (later stage) | `./.data/n8n` | its n8n data directory |
+
+- `.data/` is ignored by Git and by the Docker build context, so database files are never committed or baked into the image.
+- `docker compose down` preserves these files; they are plain directories on the host.
+- `docker compose down -v` removes named volumes only, so it does **not** delete a bind mount.
+- Delete `./.data` only after a deliberate backup, or when you intentionally want a full reset.
+
+Docker image layers, container writable layers/logs, build cache, and network metadata still live in Docker's daemon-wide storage (normally `/var/lib/docker`). Compose cannot move those per project, and reconfiguring the daemon is out of scope here.
 
 ## Configuration
 
