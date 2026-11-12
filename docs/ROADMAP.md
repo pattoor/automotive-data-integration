@@ -40,7 +40,7 @@ Build a working single-host demo in small, independently testable stages. Do not
 
 - [x] Connected the local and G7 checkouts to the `feat/automotive-data-integration` branch on GitHub.
 - [x] Confirmed the approved G7 project directory and Docker Compose runtime; project dependencies will run in containers, not on the host.
-- [x] Created the project-scoped G7 access skill and local virtual environment.
+- [x] Created local-only G7 access instructions (ignored by Git) and the local virtual environment.
 - [x] Agreed on one repository with separate FastAPI service processes that can run together on one Compose host.
 - [x] Decided the storage policy: project data (PostgreSQL now, n8n state later) uses project-relative bind mounts under `.data/`; Docker image/container/network metadata stays in Docker's shared daemon storage because Compose cannot relocate it per project. No daemon reconfiguration and no global prune; sibling projects are untouched.
 - [x] Applied that policy to `compose.yaml` (`./.data/postgres`), `.gitignore`, `.dockerignore`, and the architecture/README documentation. Static check: `docker compose config --quiet` passes and resolves the PostgreSQL source to `.data/postgres`.
