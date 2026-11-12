@@ -52,6 +52,8 @@ Source duplicates within one run and duplicate database rows across repeated run
 
 The same `compose.yaml` runs all four services on a single Debian/Linux machine (including the user's G7) or another computer with Docker Compose. Containers use Compose service names for internal communication. No cloud account or second machine is required. Exposed development ports should bind to localhost by default.
 
+The authoring checkout uses a repository-local `.venv`. On G7, the Compose image supplies Python dependencies; do not install project packages or system packages on the host.
+
 ### Production boundary
 
 The mock CRM exists only for synthetic demo and test runs. A real deployment would configure the pipeline to call the employer's authorized CRM/API; the mock service would not be presented as a real source system. A single-host Compose deployment can suit a small, low-criticality installation, but it is a single point of failure and is not high availability.

@@ -36,8 +36,9 @@ Build a working single-host demo in small, independently testable stages. Do not
 
 ## Current progress
 
-- [x] Confirmed the public GitHub repository is empty and connected it as `origin`.
-- [x] Created a feature branch for the work; no changes have been pushed.
+- [x] Connected the local and G7 checkouts to the `feat/automotive-data-integration` branch on GitHub.
+- [x] Confirmed the approved G7 project directory and Docker Compose runtime; project dependencies will run in containers, not on the host.
+- [x] Created the project-scoped G7 access skill and local virtual environment.
 - [x] Agreed on one repository with separate FastAPI service processes that can run together on one Compose host.
 - [ ] Repository foundation and Docker Compose.
 - [ ] Synthetic CRM API.
