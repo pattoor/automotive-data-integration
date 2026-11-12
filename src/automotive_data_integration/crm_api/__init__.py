@@ -1,0 +1,1 @@
+"""Synthetic CRM source service."""

@@ -1,0 +1,93 @@
+# Automotive Data Integration
+
+A small, auditable integration demo with synthetic dealership data: a mock CRM API, a pipeline API that extracts and validates from it, PostgreSQL for persistence, and n8n for manual and scheduled runs. Everything runs on one host with Docker Compose.
+
+The repository is one Python codebase with **two FastAPI processes**. Stage 0 delivers the runnable foundation only: package skeleton, health endpoints, container image, Compose services, and tests. CRM data endpoints, persistence, and n8n arrive in later stages (see `docs/ROADMAP.md`).
+
+## Layout
+
+| Path | Purpose |
+|---|---|
+| `src/automotive_data_integration/crm_api/` | Synthetic CRM source service (`crm-api`) |
+| `src/automotive_data_integration/pipeline_api/` | Consumer service (`pipeline-api`) |
+| `src/automotive_data_integration/common/` | Health route and server bootstrap shared by both services |
+| `tests/` | API tests using FastAPI `TestClient` |
+| `compose.yaml` | Two APIs plus PostgreSQL (`postgres:16-alpine`) |
+| `Dockerfile` | One image, one package, two startup commands |
+
+## Requirements
+
+- Docker Engine with Compose v2, or
+- Python 3.11+ for local development (dependencies stay in `.venv/`)
+
+## Run with Docker Compose
+
+```bash
+cp .env.example .env        # optional; defaults work without it
+docker compose up --build
+docker compose ps           # wait until all services are healthy
+curl http://127.0.0.1:8000/health   # crm-api
+curl http://127.0.0.1:8001/health   # pipeline-api
+```
+
+Health responses: `{"status":"ok","service":"crm-api"}` and `{"status":"ok","service":"pipeline-api"}`.
+
+- Host ports bind to `127.0.0.1` only; PostgreSQL is not published.
+- `pipeline-api` starts only after `pg_isready` reports PostgreSQL healthy.
+- Data lives in the `postgres-data` volume and survives `docker compose down`. Use `docker compose down -v` only when you intend to delete it.
+- Containers reach each other by Compose service name, for example `http://crm-api:8000` or host `postgres`.
+
+## Local development
+
+```bash
+python -m venv .venv
+.venv/Scripts/python.exe -m pip install -e ".[dev]"   # Windows
+# .venv/bin/python -m pip install -e ".[dev]"         # Linux/macOS
+
+.venv/Scripts/python.exe -m pytest                    # full suite
+.venv/Scripts/python.exe -m uvicorn automotive_data_integration.crm_api.main:app --reload --port 8000
+.venv/Scripts/python.exe -m uvicorn automotive_data_integration.pipeline_api.main:app --reload --port 8001
+```
+
+The console scripts `crm-api` and `pipeline-api` start the same apps using `APP_HOST` (default `0.0.0.0`) and `APP_PORT` (default `8000`).
+
+## Tests
+
+```bash
+.venv/Scripts/python.exe -m pytest tests/test_crm_api_health.py tests/test_pipeline_api_health.py  # focused
+.venv/Scripts/python.exe -m pytest                                                                # full
+docker compose run --rm crm-api pytest   # inside the image, no host packages needed
+```
+
+## Running on the G7 server
+
+Only `[private G7 project path]` is approved.
+
+```bash
+ssh [private G7 SSH target]
+cd [private G7 project path]
+git pull --ff-only
+docker compose up -d --build
+docker compose ps
+docker compose run --rm crm-api pytest
+```
+
+Do not install Python or system packages on the host; the image supplies dependencies and test tooling.
+
+## Configuration
+
+| Variable | Default | Used by |
+|---|---|---|
+| `CRM_API_PORT` | `8000` | Published host port for `crm-api` |
+| `PIPELINE_API_PORT` | `8001` | Published host port for `pipeline-api` |
+| `POSTGRES_DB` | `automotive` | PostgreSQL database name |
+| `POSTGRES_USER` | `automotive` | PostgreSQL role |
+| `POSTGRES_PASSWORD` | `automotive-local-dev` | Local demo only, not a real secret |
+| `APP_HOST` / `APP_PORT` | `0.0.0.0` / `8000` | Set by Compose inside each container |
+| `DATABASE_URL` | derived in Compose | Reserved for the persistence stage |
+
+## Known limitations
+
+- Single host only: no high availability, TLS, reverse proxy, or secret manager.
+- The image includes test dependencies so the G7 host can run tests in containers; production images would split runtime and test stages.
+- No CRM data endpoints, database schema, ETL logic, or n8n workflow yet.

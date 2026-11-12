@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "automotive-data-integration"
+version = "0.1.0"
+description = "Single-host automotive data integration demo: two FastAPI services, PostgreSQL, and n8n."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "httpx2>=2.16",
+]
+
+[project.scripts]
+crm-api = "automotive_data_integration.crm_api.main:main"
+pipeline-api = "automotive_data_integration.pipeline_api.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
