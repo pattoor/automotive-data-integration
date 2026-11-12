@@ -2,6 +2,7 @@
 .gitignore
 .venv
 .data
+.backups
 *.egg-info
 .env
 .env.*

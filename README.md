@@ -15,6 +15,7 @@ The repository is one Python codebase with **two FastAPI processes**. Stage 0 de
 | `compose.yaml` | Two APIs plus PostgreSQL (`postgres:16-alpine`) |
 | `Dockerfile` | One image, one package, two startup commands |
 | `.data/` | Local container data (PostgreSQL files; git-ignored) |
+| `.backups/` | Host-side database dumps (git-ignored) |
 
 ## Requirements
 
@@ -87,11 +88,27 @@ Persistent project data stays inside the repository folder, not in Docker's shar
 - `.data/` is ignored by Git and by the Docker build context, so database files are never committed or baked into the image.
 - `docker compose down` preserves these files; they are plain directories on the host.
 - `docker compose down -v` removes named volumes only, so it does **not** delete a bind mount.
-- Stop the stack with `docker compose down` and make a deliberate backup before deleting `./.data` for a full reset.
+- PostgreSQL owns its data files as container UID 70 on G7; direct host reads or permission changes are not expected. Query or back up through the container instead of using host `chmod`/`chown`.
+- Stop the stack with `docker compose down` and make a deliberate backup before resetting data. Since the container owns `.data/postgres`, do not try to delete or change its permissions from the host; use a project-scoped reset procedure only when intentionally requested.
+
+Back up to a user-writable folder inside the project:
+
+```bash
+mkdir -p .backups
+docker compose exec -T postgres pg_dump -U automotive -d automotive > .backups/postgres.sql
+```
+
+Restore the default demo database from that dump with:
+
+```bash
+cat .backups/postgres.sql | docker compose exec -T postgres psql -U automotive -d automotive
+```
+
+`.backups/` is excluded from Git and the Docker build context. Adjust the role/database arguments if `.env` overrides the defaults.
 
 ### Migrating an existing named volume
 
-The G7 project directory was empty before this setup and Compose had not been run there, so the initial G7 deployment has no previous database volume to migrate. For any later installation that already has data in the old `postgres-data` named volume, changing `compose.yaml` does **not** copy that data to `./.data/postgres`. Back up the old database with `pg_dump` to a file under `.data/backups/`, stop the old stack without `-v`, start the bind-mounted stack, restore and verify the data, and retain the old volume until verification succeeds. Never use a global Docker prune for this migration.
+The G7 project directory was empty before this setup and Compose had not been run there, so the initial G7 deployment has no previous database volume to migrate. For any later installation that already has data in the old `postgres-data` named volume, changing `compose.yaml` does **not** copy that data to `./.data/postgres`. Back up the old database with `pg_dump` to a file under `.backups/`, stop the old stack without `-v`, start the bind-mounted stack, restore and verify the data, and retain the old volume until verification succeeds. Never use a global Docker prune for this migration.
 
 Docker image layers, container writable layers/logs, build cache, and network metadata still live in Docker's daemon-wide storage (normally `/var/lib/docker`). Compose cannot move those per project, and reconfiguring the daemon is out of scope here.
 
