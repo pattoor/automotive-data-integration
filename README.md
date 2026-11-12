@@ -61,13 +61,11 @@ The console scripts `crm-api` and `pipeline-api` start the same apps using `APP_
 docker compose run --rm crm-api pytest   # inside the image, no host packages needed
 ```
 
-## Running on the G7 server
+## Running on a G7 server
 
-Only `[private G7 project path]` is approved.
+Machine-specific SSH aliases, usernames, and project paths are intentionally omitted from this public repository. Use your local access instructions to connect, then run these commands from the project checkout:
 
 ```bash
-ssh [private G7 SSH target]
-cd [private G7 project path]
 git pull --ff-only
 docker compose up -d --build
 docker compose ps

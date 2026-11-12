@@ -15,6 +15,7 @@ n8n/data/
 .data/
 .backups/
 .atl/
+.opencode/skills/g7-project-access/
 *.log
 # Local AI runtime state
 .atl/
