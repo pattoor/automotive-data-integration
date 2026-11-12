@@ -94,6 +94,21 @@ def test_malformed_customer_is_rejected_with_its_raw_payload_and_reason():
     assert result.duplicate_count == 0
 
 
+def test_rejected_payload_is_a_snapshot_not_an_alias_of_the_source_record():
+    record = raw_customer(
+        "CUST-9001",
+        email="not-an-email",
+        source_meta={"batch_tags": ["original"]},
+    )
+    expected_raw = copy.deepcopy(record)
+
+    result = transform_customers([record])
+    record["email"] = "corrected@example.test"
+    record["source_meta"]["batch_tags"].append("mutated")
+
+    assert result.rejected[0].raw == expected_raw
+
+
 @pytest.mark.parametrize(
     ("overrides", "field"),
     [
@@ -170,6 +185,16 @@ def test_missing_ids_are_rejected_individually_instead_of_deduplicated():
     assert result.accepted == []
     assert [rejected.source_id for rejected in result.rejected] == [None, None]
     assert all("id" in rejected.reason for rejected in result.rejected)
+    assert result.duplicate_count == 0
+
+
+def test_nan_like_ids_are_rejected_individually_and_not_counted_as_duplicates():
+    records = [raw_customer(float("nan")), raw_customer(float("nan"))]
+
+    result = transform_customers(records)
+
+    assert result.accepted == []
+    assert [rejected.source_id for rejected in result.rejected] == [None, None]
     assert result.duplicate_count == 0
 
 

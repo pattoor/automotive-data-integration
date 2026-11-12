@@ -7,6 +7,7 @@ every row. Among accepted rows sharing an identifier, the first valid record
 wins; an invalid earlier duplicate cannot hide a later valid record.
 """
 
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
@@ -68,7 +69,7 @@ def _transform(
                 RejectedRecord(
                     entity=entity,
                     source_id=_source_id(record),
-                    raw=record,
+                    raw=deepcopy(record),
                     reason=_describe(error),
                 )
             )
@@ -110,7 +111,7 @@ def _source_id(record: Any) -> str | None:
     if not isinstance(record, dict):
         return None
     value = record.get("id")
-    if value is None:
+    if value is None or (pd.api.types.is_scalar(value) and pd.isna(value)):
         return None
     if isinstance(value, str):
         stripped = value.strip()
