@@ -16,6 +16,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.2",
+    # FastAPI's supported Starlette range includes versions that require `httpx`.
+    "httpx>=0.23.0,<1.0.0",
+    # Newer Starlette releases prefer `httpx2` for TestClient.
     "httpx2>=2.16",
 ]
 
