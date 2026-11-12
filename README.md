@@ -1,15 +1,15 @@
 # Automotive Data Integration
 
-A small, auditable integration demo with synthetic dealership data: a mock CRM API, a pipeline API that extracts and validates from it, PostgreSQL for persistence, and n8n for manual and scheduled runs. Everything runs on one host with Docker Compose.
+A staged, auditable data-automation portfolio project using synthetic dealership data. Its target architecture combines a mock CRM API, pipeline API, PostgreSQL, and n8n on one Docker Compose host; current implementation status is tracked by stage below and in `docs/ROADMAP.md`.
 
-The repository is one Python codebase with **two FastAPI processes**. Stage 0 delivered the runnable foundation: package skeleton, health endpoints, container image, Compose services, and tests. Stage 1 adds deterministic synthetic CRM data with bounded pagination. Persistence, ETL, and n8n arrive in later stages (see `docs/ROADMAP.md`).
+The repository is one Python codebase with **two FastAPI processes**. Stage 0 delivered the runnable foundation: package skeleton, health endpoints, container image, Compose services, and tests. Stage 1 adds deterministic synthetic CRM data with bounded pagination; Stage 2 adds Pydantic contracts and pure batch transforms that normalize and quarantine records. Persistence, ETL, and n8n arrive in later stages (see `docs/ROADMAP.md`).
 
 ## Layout
 
 | Path | Purpose |
 |---|---|
 | `src/automotive_data_integration/crm_api/` | Synthetic CRM source service (`crm-api`) |
-| `src/automotive_data_integration/pipeline_api/` | Consumer service (`pipeline-api`) |
+| `src/automotive_data_integration/pipeline_api/` | Consumer service (`pipeline-api`): contracts in `schemas.py`, batch transforms in `transform.py` |
 | `src/automotive_data_integration/common/` | Health route and server bootstrap shared by both services |
 | `tests/` | API tests using FastAPI `TestClient` |
 | `compose.yaml` | Two APIs plus PostgreSQL (`postgres:16-alpine`) |
@@ -89,6 +89,48 @@ curl "http://127.0.0.1:8000/sales?page=1&page_size=3"
 
 Fixtures live in `src/automotive_data_integration/crm_api/fixtures.py`. All data is fictional: `.test` emails, reserved `555-01xx` phone numbers, and `SYN`-prefixed VINs. `CUST-0001` appears twice on purpose, and `CUST-9001` is intentionally malformed, so later stages can prove source deduplication and validation rejection against real API responses.
 
+## Data contracts and transforms
+
+`pipeline_api` owns normalization and validation. `schemas.py` holds one frozen Pydantic model per CRM shape; `transform.py` turns a batch of raw API rows into accepted records, quarantined rows, and a duplicate count. The API fixtures stay raw: the transform normalizes copies, never the source dictionaries.
+
+| Entity | Raw field | Normalized field | Rule |
+|---|---|---|---|
+| Customer | `id` | `crm_id` | Trimmed, required, 1–64 characters |
+| Customer | `first_name`, `last_name` | same | Trimmed, required |
+| Customer | `email` | `email` | Trimmed, validated, lowercased (reserved `.test` domain allowed) |
+| Customer | `phone`, `city` | same | Trimmed; blank becomes `null` |
+| Customer | `created_at` | `created_at` | ISO 8601 timestamp parsed to `datetime` |
+| Vehicle | `id` | `crm_id` | Trimmed, required |
+| Vehicle | `customer_id` | `customer_crm_id` | Trimmed, required |
+| Vehicle | `vin` | `vin` | Trimmed, uppercased, exactly 17 characters from the ISO 3779 set (`I`, `O`, `Q` excluded) |
+| Vehicle | `make`, `model` | same | Trimmed, required |
+| Vehicle | `year` | `year` | Integer `1886`–`2100` |
+| Vehicle | `odometer_km` | `odometer_km` | Integer `0`–`2,000,000` |
+| Sale | `id` | `crm_id` | Trimmed, required |
+| Sale | `customer_id` | `customer_crm_id` | Trimmed, required |
+| Sale | `vehicle_id` | `vehicle_crm_id` | Trimmed, required |
+| Sale | `sale_date` | `sale_date` | ISO date parsed to `date` |
+| Sale | `amount_usd` | `amount_usd` | `Decimal` greater than zero, up to 12 digits and 2 decimals |
+| Sale | `status` | `status` | Trimmed and uppercased |
+
+Each record is validated independently, so a bad row never aborts the batch:
+
+- An accepted row becomes a `Customer`, `Vehicle`, or `Sale` model.
+- A rejected row becomes a `RejectedRecord` with the entity name, the source `id` when present, the **exact** raw payload, and a reason naming the failing fields (for example `email: ...`).
+- Pandas counts every repeated, non-empty CRM identifier in the batch. Pydantic still validates every row independently, so a malformed row is preserved as a rejection. Among valid rows with the same identifier, the first valid occurrence is accepted and later valid repeats are omitted. Therefore, a malformed first row cannot hide a later valid row; a malformed repeated row can contribute to both `duplicate_count` and the rejected count. Rows without an `id` are never deduplicated and each one is rejected separately.
+- An empty batch returns an empty result.
+
+```python
+from automotive_data_integration.pipeline_api.transform import transform_customers
+
+result = transform_customers(raw_customers)
+result.accepted        # list[Customer]
+result.rejected        # list[RejectedRecord]
+result.duplicate_count # int
+```
+
+The same pattern applies to `transform_vehicles` and `transform_sales`. Nothing is persisted yet; Stage 3 adds PostgreSQL.
+
 ## Local development
 
 ```powershell
@@ -122,6 +164,7 @@ The console scripts `crm-api` and `pipeline-api` start the same apps using `APP_
 
 ```bash
 .venv/Scripts/python.exe -m pytest tests/test_crm_api_health.py tests/test_crm_api_resources.py   # CRM API
+.venv/Scripts/python.exe -m pytest tests/test_pipeline_schemas.py tests/test_pipeline_transforms.py   # contracts and transforms
 .venv/Scripts/python.exe -m pytest                                    # full
 docker compose run --rm crm-api pytest   # inside the image, no host packages needed
 ```
@@ -191,4 +234,5 @@ Docker image layers, container writable layers/logs, build cache, and network me
 
 - Single host only: no high availability, TLS, reverse proxy, or secret manager.
 - The image includes test dependencies so the G7 host can run tests in containers; production images would split runtime and test stages.
-- CRM endpoints serve synthetic in-memory fixtures only; there is no database schema, ETL logic, or n8n workflow yet.
+- CRM endpoints serve synthetic in-memory fixtures only; there is no database schema, run endpoint, or n8n workflow yet. Transforms run in memory and are not persisted.
+- Duplicate detection compares trimmed CRM identifiers case-sensitively within one supplied batch; cross-run duplicates are left to the PostgreSQL uniqueness constraint in Stage 3.

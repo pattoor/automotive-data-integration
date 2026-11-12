@@ -44,7 +44,7 @@ Pandas is limited to batch-oriented normalization and duplicate analysis where i
 - A `rejected_records` record captures the run, entity type, source identifier when available, raw synthetic payload, and validation/processing reason.
 - Foreign keys connect sales to their customer and vehicle. Invalid or unresolvable records are rejected rather than silently creating broken references.
 
-Source duplicates within one run and duplicate database rows across repeated runs are distinct cases. The pipeline will count and report source duplicates; database uniqueness and UPSERT handle repeated executions.
+Source duplicates within one run and duplicate database rows across repeated runs are distinct cases. Pandas counts repeated non-empty CRM IDs across the batch. Pydantic validates every row independently; invalid rows stay rejected, and among valid rows with a repeated ID the first valid row wins. Thus an invalid first occurrence cannot suppress a later valid record, and a malformed repeated row may contribute to both duplicate and rejection counts. PostgreSQL uniqueness and UPSERT handle duplicates across repeated executions.
 
 ## Deployment model
 
