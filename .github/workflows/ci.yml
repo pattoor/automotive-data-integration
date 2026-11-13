@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install project and test dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -e ".[dev]"
+
+      - name: Run local unit and contract tests
+        run: .venv/bin/python -m pytest
+
+      - name: Check Python dependencies
+        run: .venv/bin/python -m pip check
+
+      - name: Validate Compose configuration
+        run: docker compose config --quiet
+
+      - name: Prepare project-local n8n state directory
+        run: |
+          mkdir -p n8n/data
+          sudo chown 1000:1000 n8n/data
+
+      - name: Build and start the complete Compose stack
+        run: docker compose up -d --build --wait --wait-timeout 300
+
+      - name: Run the complete test suite against Compose services
+        run: docker compose exec -T pipeline-api pytest
+
+      - name: Run the explicitly marked live HTTP smoke test
+        run: docker compose exec -T -e COMPOSE_SMOKE_TEST=1 pipeline-api pytest tests/test_compose_smoke.py
+
+      - name: Stop this Compose project
+        if: always()
+        run: docker compose down
