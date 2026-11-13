@@ -398,6 +398,23 @@ def test_source_cannot_claim_an_unbounded_number_of_pages():
         CrmClient(BASE_URL, transport=serve(pages, [])).fetch_customers()
 
 
+def test_extremely_large_totals_hit_the_page_limit_without_float_overflow():
+    total = 10**400
+    pages = {
+        1: envelope(
+            [record("CUST-1")],
+            page=1,
+            page_size=3,
+            total=total,
+            total_pages=(total + 2) // 3,
+            next_page=2,
+        )
+    }
+
+    with pytest.raises(CrmClientError, match="page limit"):
+        CrmClient(BASE_URL, transport=serve(pages, [])).fetch_customers()
+
+
 @pytest.mark.parametrize("page_size", [0, -1, 101])
 def test_page_size_must_be_bounded(page_size):
     with pytest.raises(ValueError):

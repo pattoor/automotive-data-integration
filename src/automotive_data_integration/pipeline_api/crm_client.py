@@ -14,7 +14,6 @@ collection makes cross-page duplicate counting exact, and the alternative
 
 from __future__ import annotations
 
-from math import ceil
 from typing import Any
 
 import httpx
@@ -99,7 +98,9 @@ class CrmClient:
                         f"crm-api returned page_size {envelope.page_size} instead "
                         f"of {self._page_size} for {path}"
                     )
-                calculated_pages = ceil(envelope.total / self._page_size)
+                calculated_pages = (
+                    envelope.total + self._page_size - 1
+                ) // self._page_size
                 if envelope.total_pages != calculated_pages:
                     raise CrmClientError(
                         f"crm-api returned inconsistent total_pages for {path}"
