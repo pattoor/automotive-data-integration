@@ -38,13 +38,33 @@ Pandas is limited to batch-oriented normalization and duplicate analysis where i
 
 ## Persistence and idempotency
 
+`database/schema.sql` is the initial schema, applied idempotently by direct SQL (`psycopg`, no ORM):
+
+| Table | Responsibility | Key rules |
+|---|---|---|
+| `customers` | Normalized customers, one row per CRM identifier. | `crm_id` primary key; lowercase non-blank email; length/blank checks. |
+| `vehicles` | Normalized vehicles linked to a customer. | `crm_id` primary key; `customer_crm_id` foreign key; 17-character VIN pattern; year `1886`–`2100`; odometer `0`–`2000000`. |
+| `sales` | Normalized sales linked to a customer and a vehicle. | `crm_id` primary key; both parent foreign keys; `amount_usd NUMERIC(12,2) > 0`; non-blank status. |
+| `pipeline_runs` | One row per execution. | Status `running`/`succeeded`/`failed`; start and finish timestamps; fetched, accepted, rejected, and duplicate counts; optional error message. |
+| `rejected_records` | Quarantined source rows. | Owning `run_id` (cascade delete); entity, source id, exact raw payload as `jsonb`, and reason. |
+
 - Customers, vehicles, and sales each have a stable CRM identifier protected by a unique constraint.
-- Writes use `INSERT ... ON CONFLICT ... DO UPDATE`, so a rerun updates matching entities instead of inserting duplicates.
-- A `pipeline_runs` record captures status, timestamps, and fetched/accepted/rejected counts.
-- A `rejected_records` record captures the run, entity type, source identifier when available, raw synthetic payload, and validation/processing reason.
-- Foreign keys connect sales to their customer and vehicle. Invalid or unresolvable records are rejected rather than silently creating broken references.
+- Writes use `INSERT ... ON CONFLICT ... DO UPDATE`, so a rerun updates matching entities instead of inserting duplicates; repeated identifiers inside one batch are applied in order and the last value wins.
+- A `pipeline_runs` record captures status, timestamps, and fetched/accepted/rejected/duplicate counts plus an error message when a run fails.
+- A `rejected_records` record captures the run, entity type, source identifier when available, raw synthetic payload as `jsonb`, and validation/processing reason.
+- Foreign keys connect vehicles to their customer and sales to their customer and vehicle. Invalid or unresolvable records are rejected rather than silently creating broken references; the repository propagates the PostgreSQL violation instead of hiding it.
+- The schema does not verify that a sale's vehicle belongs to the sale's customer; that cross-record rule belongs to orchestration, where both records are known.
 
 Source duplicates within one run and duplicate database rows across repeated runs are distinct cases. Pandas counts repeated non-empty CRM IDs across the batch. Pydantic validates every row independently; invalid rows stay rejected, and among valid rows with a repeated ID the first valid row wins. Thus an invalid first occurrence cannot suppress a later valid record, and a malformed repeated row may contribute to both duplicate and rejection counts. PostgreSQL uniqueness and UPSERT handle duplicates across repeated executions.
+
+### Schema application and migration policy
+
+The schema has two application paths because a database directory may already exist:
+
+1. Compose mounts `database/schema.sql` read-only at `/docker-entrypoint-initdb.d/001_schema.sql`; PostgreSQL applies it only while initializing an empty data directory.
+2. `pipeline-api` calls `PostgresRepository.initialize_schema()` during startup whenever `DATABASE_URL` is set. This covers the current G7 data directory, which was initialized before the schema file existed, and any checkout that starts the API without Compose. Startup fails if the database rejects the schema, rather than serving with an unknown state.
+
+Every statement is `CREATE TABLE IF NOT EXISTS` or `CREATE INDEX IF NOT EXISTS`, so startup repeated on an existing database creates only what is missing and never alters, drops, or rewrites data. Because a baseline file that was already applied cannot evolve a live database, later changes require an explicit versioned migration file under `database/migrations/`, applied deliberately, plus a matching baseline update for new installs.
 
 ## Deployment model
 
@@ -85,6 +105,7 @@ Production hardening is deliberately outside the first implementation: TLS/rever
 | Docker Compose for all local services | Reproducible single-host setup and a realistic service network. | Running services directly on the host reduces container learning but makes setup less consistent. Kubernetes is excessive for a single-host portfolio demo. |
 | Bind mounts under `./.data/` for persistent data | Project data stays inside the approved G7 project folder, so it is visible and can be backed up separately alongside the repository folder. | Named Docker volumes hide data in daemon-wide storage and tie it to volume lifecycle commands. Relocating Docker's whole storage would require a global daemon change that affects every other project on the host, so image/container/network metadata stays where Docker manages it. |
 | PostgreSQL constraints and SQL UPSERT | Idempotency is enforced at the database boundary and remains visible to learners. | Application-only duplicate checks can race and are not a durable uniqueness guarantee. An ORM can be added later, but direct SQL keeps this small schema and upsert behavior explicit. |
+| Idempotent baseline script plus explicit migrations | A fresh Compose database and the already-initialized G7 database reach the same state from one readable file, while applied databases are never mutated by editing it. | A full migration tool (Alembic, Flyway) automates version tracking and rollbacks, but adds configuration and a second execution path for a five-table schema. Editing the baseline in place would silently skip existing databases. |
 | Pydantic per record; Pandas only for useful batches | Clear validation errors and focused use of the requested data-frame tool. | Using Pandas for every step adds overhead; using only Python collections is simpler for tiny data but misses a useful batch-processing example. |
 | Synthetic fixtures, including documented bad records | Demonstrates validation and quarantine without personal or commercial data. | Live CRM credentials would make the demo unsafe, non-reproducible, and out of scope. |
 

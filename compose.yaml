@@ -25,6 +25,12 @@ services:
       - type: bind
         source: ./.data/postgres
         target: /var/lib/postgresql/data
+      # Applied only when the data directory is empty (first initialization).
+      # pipeline-api also applies it at startup for already-initialized data.
+      - type: bind
+        source: ./database/schema.sql
+        target: /docker-entrypoint-initdb.d/001_schema.sql
+        read_only: true
     healthcheck:
       test:
         - CMD-SHELL

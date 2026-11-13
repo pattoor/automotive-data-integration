@@ -9,6 +9,9 @@ WORKDIR /app
 
 COPY pyproject.toml README.md ./
 COPY src ./src
+# The application applies this idempotent schema on startup; PostgreSQL also
+# reads the Compose-mounted copy when it initializes a brand-new data directory.
+COPY database ./database
 
 # The demo image also carries the test tooling so tests can run inside Compose
 # on hosts that must not install Python packages (the G7 server).

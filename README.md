@@ -2,16 +2,17 @@
 
 A staged, auditable data-automation portfolio project using synthetic dealership data. Its target architecture combines a mock CRM API, pipeline API, PostgreSQL, and n8n on one Docker Compose host; current implementation status is tracked by stage below and in `docs/ROADMAP.md`.
 
-The repository is one Python codebase with **two FastAPI processes**. Stage 0 delivered the runnable foundation: package skeleton, health endpoints, container image, Compose services, and tests. Stage 1 adds deterministic synthetic CRM data with bounded pagination; Stage 2 adds Pydantic contracts and pure batch transforms that normalize and quarantine records. Persistence, ETL, and n8n arrive in later stages (see `docs/ROADMAP.md`).
+The repository is one Python codebase with **two FastAPI processes**. Stage 0 delivered the runnable foundation: package skeleton, health endpoints, container image, Compose services, and tests. Stage 1 adds deterministic synthetic CRM data with bounded pagination; Stage 2 adds Pydantic contracts and pure batch transforms that normalize and quarantine records; Stage 3 adds the PostgreSQL schema and repository that persist entities, run summaries, and rejected payloads. ETL orchestration and n8n arrive in later stages (see `docs/ROADMAP.md`).
 
 ## Layout
 
 | Path | Purpose |
 |---|---|
 | `src/automotive_data_integration/crm_api/` | Synthetic CRM source service (`crm-api`) |
-| `src/automotive_data_integration/pipeline_api/` | Consumer service (`pipeline-api`): contracts in `schemas.py`, batch transforms in `transform.py` |
+| `src/automotive_data_integration/pipeline_api/` | Consumer service (`pipeline-api`): contracts in `schemas.py`, batch transforms in `transform.py`, persistence in `repository.py` |
 | `src/automotive_data_integration/common/` | Health route and server bootstrap shared by both services |
-| `tests/` | API tests using FastAPI `TestClient` |
+| `database/schema.sql` | Versioned, idempotent PostgreSQL schema (initialization + startup) |
+| `tests/` | API and transform tests with FastAPI `TestClient`; PostgreSQL integration tests skip without a database URL |
 | `compose.yaml` | Two APIs plus PostgreSQL (`postgres:16-alpine`) |
 | `Dockerfile` | One image, one package, two startup commands |
 | `.data/` | Local container data (PostgreSQL files; git-ignored) |
@@ -38,6 +39,7 @@ Health responses: `{"status":"ok","service":"crm-api"}` and `{"status":"ok","ser
 - `pipeline-api` starts only after `pg_isready` reports PostgreSQL healthy.
 - Database files live in `./.data/postgres` (bind-mounted to `/var/lib/postgresql/data`) and survive `docker compose down`. `docker compose down -v` does not remove a bind mount either. Remove that directory only after a deliberate backup, or when you intend a full reset.
 - Containers reach each other by Compose service name, for example `http://crm-api:8000` or host `postgres`.
+- Schema setup is automatic: PostgreSQL applies `database/schema.sql` when it initializes an empty data directory, and `pipeline-api` applies the same idempotent file at startup, so an existing data directory gains missing tables without a reset.
 
 ## CRM API
 
@@ -129,7 +131,55 @@ result.rejected        # list[RejectedRecord]
 result.duplicate_count # int
 ```
 
-The same pattern applies to `transform_vehicles` and `transform_sales`. Nothing is persisted yet; Stage 3 adds PostgreSQL.
+The same pattern applies to `transform_vehicles` and `transform_sales`.
+
+## PostgreSQL persistence
+
+`database/schema.sql` is the initial schema and `pipeline_api/repository.py` is the only code that writes to it. Both use direct SQL through `psycopg` — no ORM and no migration framework yet.
+
+| Table | Responsibility |
+|---|---|
+| `customers` | One row per normalized customer keyed by `crm_id`: names, normalized lowercase email, optional phone/city, source `created_at`, and a database-written `updated_at`. |
+| `vehicles` | One row per normalized vehicle keyed by `crm_id`, with `customer_crm_id` referencing `customers`. |
+| `sales` | One row per normalized sale keyed by `crm_id`, with `customer_crm_id` and `vehicle_crm_id` foreign keys, `sale_date`, `amount_usd`, and `status`. |
+| `pipeline_runs` | One row per pipeline execution: `status`, `started_at`/`finished_at`, fetched/accepted/rejected/duplicate counts, and `error_message`. |
+| `rejected_records` | Quarantined source rows: owning `run_id`, entity, source identifier when available, the exact raw payload as `jsonb`, and the rejection reason. |
+
+Constraint highlights: CRM identifiers are primary keys, so they are unique; `vehicles.customer_crm_id`, `sales.customer_crm_id`, and `sales.vehicle_crm_id` are enforced foreign keys; amounts use `NUMERIC(12,2)` with `amount_usd > 0`; VIN, year, odometer, status, and run-count checks reject implausible values; a run cannot finish before it starts. Rejected payloads keep their original JSON shape, including nested objects and arrays.
+
+```python
+from automotive_data_integration.pipeline_api.repository import PostgresRepository
+
+repository = PostgresRepository(dsn)
+repository.initialize_schema()                      # idempotent; safe on every startup
+repository.upsert_customers(customers)              # -> rows written
+repository.upsert_vehicles(vehicles)                # after their customers
+repository.upsert_sales(sales)                      # after their customer and vehicle
+run_id = repository.create_pipeline_run()           # -> new run in `running` status
+repository.finish_pipeline_run(
+    run_id,
+    status="succeeded",                             # `running`, `succeeded`, or `failed`
+    fetched_count=7,
+    accepted_count=5,
+    rejected_count=1,
+    duplicate_count=1,
+    error_message=None,
+)
+repository.save_rejected_records(run_id, rejected)  # -> rows written
+```
+
+- Each method opens one connection and commits one logical operation. Errors are not swallowed: an unresolvable foreign key raises `psycopg.errors.ForeignKeyViolation`, a constraint breach raises its `psycopg` error, and an unreachable server raises `psycopg.OperationalError`. `finish_pipeline_run` raises `LookupError` for an unknown run id.
+- Upserts are `INSERT ... ON CONFLICT (crm_id) DO UPDATE`, so repeating a batch updates those rows (and `updated_at`) instead of adding duplicates. Two rows with the same identifier in one batch are applied in order, and the last value wins.
+- Write parents before children: a vehicle needs its customer row and a sale needs both its customer and vehicle rows.
+
+### When the schema is applied
+
+`database/schema.sql` contains only `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` statements: it creates missing objects and never alters, drops, or rewrites existing data. It has two entry points:
+
+1. Compose mounts it read-only at `/docker-entrypoint-initdb.d/001_schema.sql`, so PostgreSQL applies it once while initializing an empty data directory.
+2. `pipeline-api` calls `PostgresRepository.initialize_schema()` during startup when `DATABASE_URL` is set, which also covers a database directory that already exists — such as the current G7 `./.data/postgres` — where PostgreSQL skips init scripts entirely.
+
+Editing this file therefore does **not** change an existing database. Later schema changes need an explicit migration file (for example `database/migrations/002_add_column.sql`) applied deliberately, plus a matching change to this baseline for new installs.
 
 ## Local development
 
@@ -165,9 +215,19 @@ The console scripts `crm-api` and `pipeline-api` start the same apps using `APP_
 ```bash
 .venv/Scripts/python.exe -m pytest tests/test_crm_api_health.py tests/test_crm_api_resources.py   # CRM API
 .venv/Scripts/python.exe -m pytest tests/test_pipeline_schemas.py tests/test_pipeline_transforms.py   # contracts and transforms
-.venv/Scripts/python.exe -m pytest                                    # full
+.venv/Scripts/python.exe -m pytest                                    # full; PostgreSQL tests skip without a URL
 docker compose run --rm crm-api pytest   # inside the image, no host packages needed
 ```
+
+The PostgreSQL tests are integration tests against a real server. They skip with a clear reason unless `TEST_DATABASE_URL` or `DATABASE_URL` is set, so a laptop without a database still reports a green suite. They create rows under a unique per-test identifier prefix and delete only those rows; they never truncate or drop tables.
+
+```bash
+# Against the Compose database (published port is not exposed, so run in a service):
+docker compose run --rm -e TEST_DATABASE_URL=postgresql://automotive:automotive-local-dev@postgres:5432/automotive \
+  pipeline-api pytest tests/test_postgres_repository.py
+```
+
+Inside Compose the schema is created by PostgreSQL's initialization script or by `pipeline-api` startup, so the tests run against the same schema the application uses.
 
 ## Running on a G7 server
 
@@ -228,11 +288,16 @@ Docker image layers, container writable layers/logs, build cache, and network me
 | `POSTGRES_USER` | `automotive` | PostgreSQL role |
 | `POSTGRES_PASSWORD` | `automotive-local-dev` | Local demo only, not a real secret |
 | `APP_HOST` / `APP_PORT` | `0.0.0.0` / `8000` | Set by Compose inside each container |
-| `DATABASE_URL` | derived in Compose | Reserved for the persistence stage |
+| `DATABASE_URL` | derived in Compose | `pipeline-api`: connection string; when set, the schema is initialized at startup |
+| `TEST_DATABASE_URL` | unset | Only the PostgreSQL integration tests; falls back to `DATABASE_URL` |
+
+`DATABASE_URL` comes from Compose for the pipeline service and is not needed for local unit tests. Keep real credentials out of tracked files; `.env` stays untracked.
 
 ## Known limitations
 
 - Single host only: no high availability, TLS, reverse proxy, or secret manager.
 - The image includes test dependencies so the G7 host can run tests in containers; production images would split runtime and test stages.
-- CRM endpoints serve synthetic in-memory fixtures only; there is no database schema, run endpoint, or n8n workflow yet. Transforms run in memory and are not persisted.
-- Duplicate detection compares trimmed CRM identifiers case-sensitively within one supplied batch; cross-run duplicates are left to the PostgreSQL uniqueness constraint in Stage 3.
+- CRM endpoints serve synthetic in-memory fixtures only. Persistence exists, but there is no run endpoint yet and n8n is not wired: Stage 4 adds the paginated CRM client and `POST /pipeline/runs`.
+- Duplicate detection compares trimmed CRM identifiers case-sensitively within one supplied batch; cross-run duplicates are handled by the PostgreSQL uniqueness constraint and UPSERT.
+- `sales` enforces that its customer and vehicle exist, but not that the vehicle belongs to that customer; that cross-check is a Stage 4 orchestration concern rather than a database constraint.
+- Schema changes are manual: there is no migration runner yet, so an existing database only changes when an explicit migration file is applied.
