@@ -45,7 +45,7 @@ Pandas is limited to batch-oriented normalization and duplicate analysis where i
 
 ## Pipeline run semantics
 
-`POST /pipeline/runs` is synchronous and returns a concise summary: `run_id`, `status`, and `fetched`, `accepted`, `rejected`, and `duplicate` counts.
+`POST /pipeline/runs` is synchronous and returns a concise summary: `run_id`, `status`, and `fetched`, `accepted`, `rejected`, and `duplicate` counts. The exact column-level meanings are in the [data dictionary](DATA_DICTIONARY.md#count-and-status-semantics), and read-only queries for inspecting runs and rejections are in [SQL examples](SQL_EXAMPLES.md).
 
 - `fetched` counts every source row read, `accepted` every entity persisted, `rejected` every quarantined row (validation or unresolved parent), and `duplicate` every repeated non-empty source identifier.
 - A run starts as `running` before extraction. A CRM or PostgreSQL failure finalizes it as `failed` with an error message that names only the failure class, and the endpoint answers `502` (source) or `503` (database/configuration). Raw payloads and credentials are never logged or returned.
@@ -66,11 +66,11 @@ n8n is a scheduler and HTTP caller, not an ETL component. `n8n/workflows/automot
 
 Both triggers connect directly to `Run Pipeline`. There is no transformation, branching, retry, or database node, so n8n cannot drift into a second source of business rules. The container runs the pinned `n8nio/n8n:2.47.7` image with `GENERIC_TIMEZONE=UTC`, its editor published on `127.0.0.1:5678` only, telemetry/personalization/version-notification calls disabled, and `N8N_SECURE_COOKIE=false` because the loopback demo has no TLS.
 
-Import and activation are deliberate operator actions: the workflow imports inactive, is executed once manually to prove the call works, and is then published. n8n state (SQLite database, encryption key, local owner account) is a project-relative bind mount; the workflow file is tracked in Git and mounted read-only for copying out of the container.
+Import and activation are deliberate operator actions: the workflow imports inactive and is executed once manually to prove the call works. Publishing is optional: it only enables automatic scheduled executions, and for this practice project the daily schedule stays intentionally inactive, with manual execution as the supported path. n8n state (SQLite database, encryption key, local owner account) is a project-relative bind mount; the workflow file is tracked in Git and mounted read-only for copying out of the container.
 
 ## Persistence and idempotency
 
-`database/schema.sql` is the initial schema, applied idempotently by direct SQL (`psycopg`, no ORM):
+`database/schema.sql` is the initial schema, applied idempotently by direct SQL (`psycopg`, no ORM). Every column, type, and constraint is listed in the [data dictionary](DATA_DICTIONARY.md#tables); at a glance:
 
 | Table | Responsibility | Key rules |
 |---|---|---|
@@ -122,7 +122,7 @@ This is a deliberate trade-off rather than a complete relocation of Docker state
 | Project data (database files, n8n state) | PostgreSQL under `.data/postgres`, n8n under `n8n/data` in the approved G7 project folder | Visible by path. PostgreSQL files are owned by container UID 70 and should be accessed through SQL/`pg_dump`, not host file permissions; n8n files are owned by UID 1000, which matches the G7 project user, so no `chown` is needed. Backups go under ignored `./.backups/`. |
 | Docker image layers, container writable layers/logs, build cache, network metadata | Docker's shared daemon storage (normally `/var/lib/docker`, global) | Compose cannot relocate these per project. Changing `data-root` or otherwise reconfiguring the daemon is a host-wide change and is explicitly out of scope for this project. |
 
-Consequences worth stating plainly: `docker compose down` does not touch bind-mounted data; `docker compose down -v` also does not, because it only removes named volumes. Stop the stack and create a project-local backup under `.backups/` before an intentional reset. PostgreSQL files are owned by the container UID (70 on G7), so the host user should not inspect or change their permissions directly; use `psql` and `pg_dump` through the service. n8n state is a SQLite database plus an encryption key file owned by UID 1000; stop the `n8n` service before copying `./n8n/data` for a backup, because the key and database must stay consistent. Switching an existing installation from the former `postgres-data` named volume does not copy its contents; back it up with `pg_dump`, restore into the bind-mounted database, and verify before retiring the old volume. The initial G7 checkout had no previous Compose data to migrate. Docker's own storage still grows from images, build cache, and containers, and reclaiming it is a host maintenance decision made outside this project — never through a global prune or daemon reconfiguration triggered here.
+Consequences worth stating plainly: `docker compose down` does not touch bind-mounted data; `docker compose down -v` also does not, because it only removes named volumes. Stop the stack and create a project-local backup under `.backups/` before an intentional reset. PostgreSQL files are owned by the container UID (70 on G7), so the host user should not inspect or change their permissions directly; use `psql` and `pg_dump` through the service. n8n state is a SQLite database plus an encryption key file owned by UID 1000; stop the `n8n` service before copying `./n8n/data` for a backup, because the key and database must stay consistent. Switching an existing installation from the former `postgres-data` named volume does not copy its contents; back it up with `pg_dump`, restore into the bind-mounted database, and verify before retiring the old volume. The initial G7 checkout had no previous Compose data to migrate. Docker's own storage still grows from images, build cache, and containers, and reclaiming it is a host maintenance decision made outside this project — never through a global prune or daemon reconfiguration triggered here. Practical checks for these paths, including the ownership rules above, are collected in [Troubleshooting](TROUBLESHOOTING.md).
 
 ### Production boundary
 

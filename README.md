@@ -13,12 +13,23 @@ The repository is one Python codebase with **two FastAPI processes**. Stage 0 de
 | `src/automotive_data_integration/common/` | Health route and server bootstrap shared by both services |
 | `database/schema.sql` | Versioned, idempotent PostgreSQL schema (initialization + startup) |
 | `n8n/workflows/automotive-pipeline.json` | Versioned n8n workflow export: manual and daily schedule triggers calling the pipeline endpoint |
+| `docs/ARCHITECTURE.md` | Service boundaries, data flow, run semantics, and the architecture decision matrix |
+| `docs/DATA_DICTIONARY.md` | CRM field mapping, normalization rules, and all five table definitions |
+| `docs/SQL_EXAMPLES.md` | Read-only `SELECT` queries for counts, runs, and rejections |
+| `docs/TROUBLESHOOTING.md` | Symptom → safe check → action guide for Compose, API, tests, and n8n |
 | `tests/` | API and transform tests with FastAPI `TestClient`; PostgreSQL integration tests skip without a database URL; n8n workflow contract test |
 | `compose.yaml` | Two APIs plus PostgreSQL (`postgres:16-alpine`) and n8n (`n8nio/n8n:2.47.7`) |
 | `Dockerfile` | One image, one package, two startup commands |
 | `.data/` | Local container data (PostgreSQL files; git-ignored) |
 | `n8n/data/` | n8n state: SQLite database, encryption key, local user settings (git-ignored) |
 | `.backups/` | Host-side database dumps (git-ignored) |
+
+## Documentation
+
+- [Architecture](docs/ARCHITECTURE.md) — service boundaries, data flow, run semantics, and the [decision matrix](docs/ARCHITECTURE.md#decisions-and-alternatives) behind every major trade-off.
+- [Data dictionary](docs/DATA_DICTIONARY.md) — CRM-to-normalized field mapping, all five PostgreSQL tables, constraints, relationships, and the exact `fetched`/`accepted`/`rejected`/`duplicate` definitions.
+- [SQL examples](docs/SQL_EXAMPLES.md) — read-only queries for row counts, recent runs, rejections, and the latest run, run through `docker compose exec`.
+- [Troubleshooting](docs/TROUBLESHOOTING.md) — symptom → safe check → action for unhealthy services, 502/503 responses, skipped database tests, and n8n access.
 
 ## Requirements
 
