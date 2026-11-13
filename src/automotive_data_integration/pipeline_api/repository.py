@@ -91,8 +91,10 @@ SET status = %(status)s,
     rejected_count = %(rejected_count)s,
     duplicate_count = %(duplicate_count)s,
     error_message = %(error_message)s
-WHERE id = %(run_id)s
+WHERE id = %(run_id)s AND status = 'running'
 """
+
+_FINAL_RUN_STATUSES = frozenset({"succeeded", "failed"})
 
 _INSERT_REJECTED_RECORD = """
 INSERT INTO rejected_records (run_id, entity, source_id, raw_payload, reason)
@@ -214,7 +216,15 @@ class PostgresRepository:
         duplicate_count: int,
         error_message: str | None = None,
     ) -> None:
-        """Record the final status, counts, and optional error of a run."""
+        """Finalize a running execution with counts and an optional error.
+
+        Raises ``LookupError`` if the run id is missing or has already reached
+        a terminal status. Those cases share one exception because both mean
+        this run cannot be finalized by the caller.
+        """
+        if status not in _FINAL_RUN_STATUSES:
+            raise ValueError("status must be one of: succeeded, failed")
+
         params = {
             "run_id": run_id,
             "status": status,
@@ -227,7 +237,9 @@ class PostgresRepository:
         with psycopg.connect(self._dsn) as connection:
             cursor = connection.execute(_FINISH_PIPELINE_RUN, params)
             if cursor.rowcount != 1:
-                raise LookupError(f"pipeline run {run_id} does not exist")
+                raise LookupError(
+                    f"pipeline run {run_id} does not exist or is already finished"
+                )
 
     def save_rejected_records(
         self, run_id: int, rejected: Sequence[RejectedRecord]

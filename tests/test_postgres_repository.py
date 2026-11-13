@@ -288,6 +288,36 @@ def test_finish_pipeline_run_rejects_unknown_run_id(database):
         )
 
 
+def test_finish_pipeline_run_does_not_overwrite_a_terminal_run(database):
+    run_id = database.create_run()
+    database.repository.finish_pipeline_run(
+        run_id,
+        status="succeeded",
+        fetched_count=5,
+        accepted_count=5,
+        rejected_count=0,
+        duplicate_count=0,
+    )
+
+    with pytest.raises(LookupError):
+        database.repository.finish_pipeline_run(
+            run_id,
+            status="failed",
+            fetched_count=5,
+            accepted_count=0,
+            rejected_count=5,
+            duplicate_count=0,
+            error_message="late overwrite attempt",
+        )
+
+    rows = fetch_all(
+        "SELECT status, accepted_count, rejected_count, error_message "
+        "FROM pipeline_runs WHERE id = %s",
+        (run_id,),
+    )
+    assert rows == [("succeeded", 5, 0, None)]
+
+
 def test_upsert_vehicles_surfaces_unknown_customer_foreign_key(database):
     with pytest.raises(psycopg.errors.ForeignKeyViolation):
         database.repository.upsert_vehicles(

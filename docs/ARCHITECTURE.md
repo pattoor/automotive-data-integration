@@ -45,7 +45,7 @@ Pandas is limited to batch-oriented normalization and duplicate analysis where i
 | `customers` | Normalized customers, one row per CRM identifier. | `crm_id` primary key; lowercase non-blank email; length/blank checks. |
 | `vehicles` | Normalized vehicles linked to a customer. | `crm_id` primary key; `customer_crm_id` foreign key; 17-character VIN pattern; year `1886`–`2100`; odometer `0`–`2000000`. |
 | `sales` | Normalized sales linked to a customer and a vehicle. | `crm_id` primary key; both parent foreign keys; `amount_usd NUMERIC(12,2) > 0`; non-blank status. |
-| `pipeline_runs` | One row per execution. | Status `running`/`succeeded`/`failed`; start and finish timestamps; fetched, accepted, rejected, and duplicate counts; optional error message. |
+| `pipeline_runs` | One row per execution. | Starts as `running`, then finalizes once to `succeeded` or `failed`; start/finish timestamps; fetched, accepted, rejected, and duplicate counts; optional error message. |
 | `rejected_records` | Quarantined source rows. | Owning `run_id` (cascade delete); entity, source id, exact raw payload as `jsonb`, and reason. |
 
 - Customers, vehicles, and sales each have a stable CRM identifier protected by a unique constraint.

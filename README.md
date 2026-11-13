@@ -158,7 +158,7 @@ repository.upsert_sales(sales)                      # after their customer and v
 run_id = repository.create_pipeline_run()           # -> new run in `running` status
 repository.finish_pipeline_run(
     run_id,
-    status="succeeded",                             # `running`, `succeeded`, or `failed`
+    status="succeeded",                             # final status: `succeeded` or `failed`
     fetched_count=7,
     accepted_count=5,
     rejected_count=1,
@@ -168,7 +168,7 @@ repository.finish_pipeline_run(
 repository.save_rejected_records(run_id, rejected)  # -> rows written
 ```
 
-- Each method opens one connection and commits one logical operation. Errors are not swallowed: an unresolvable foreign key raises `psycopg.errors.ForeignKeyViolation`, a constraint breach raises its `psycopg` error, and an unreachable server raises `psycopg.OperationalError`. `finish_pipeline_run` raises `LookupError` for an unknown run id.
+- Each method opens one connection and commits one logical operation. Errors are not swallowed: an unresolvable foreign key raises `psycopg.errors.ForeignKeyViolation`, a constraint breach raises its `psycopg` error, and an unreachable server raises `psycopg.OperationalError`. `finish_pipeline_run` raises `LookupError` when a run ID is missing or already finalized; both mean the run cannot be finalized again.
 - Upserts are `INSERT ... ON CONFLICT (crm_id) DO UPDATE`, so repeating a batch updates those rows (and `updated_at`) instead of adding duplicates. Two rows with the same identifier in one batch are applied in order, and the last value wins.
 - Write parents before children: a vehicle needs its customer row and a sale needs both its customer and vehicle rows.
 
