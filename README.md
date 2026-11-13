@@ -205,7 +205,7 @@ The response is a concise `PipelineRunSummary`; the complete record lives in `pi
 ### Flow
 
 1. Create a `pipeline_runs` row in `running` status.
-2. Extract every page of `/customers`, `/vehicles`, and `/sales` with the synchronous `httpx` client. It starts at page `1`, requests a bounded `CRM_PAGE_SIZE`, follows `next_page` until it is `null`, validates each envelope, and stops on a repeated or non-progressing cursor instead of looping.
+2. Extract every page of `/customers`, `/vehicles`, and `/sales` with the synchronous `httpx` client. It starts at page `1`, requests a bounded `CRM_PAGE_SIZE`, verifies page size/totals and exact next-page progression, checks the final row count, and caps a collection at 10,000 pages.
 3. Run the Stage 2 transforms over the complete collections, so a repeated CRM identifier is detected even when the two rows land on different pages.
 4. Validate relationships against this batch: a vehicle needs an accepted customer, and a sale needs an accepted customer and an accepted vehicle. Unresolved rows are quarantined with their exact raw payload and a reason naming the missing parent.
 5. Upsert customers, then vehicles, then sales, so foreign keys are satisfied in parent-before-child order.
@@ -231,7 +231,7 @@ With the synthetic fixtures one run reads 17 rows, persists 15 entities (5 custo
 
 ### Memory trade-off
 
-The client collects each entire collection before transforming it. That is a deliberate choice for this demo: the synthetic collections are small, collecting everything makes cross-page duplicate counting exact, and upserts keep the load idempotent. A production-sized source would stream pages and hold only a bounded batch, which needs additional cross-batch state for duplicates and parent resolution.
+The client collects each entire collection before transforming it. That is a deliberate choice for this demo: the synthetic collections are small, collecting everything makes cross-page duplicate counting exact, and upserts keep the load idempotent. A production-sized source would stream pages and hold only a bounded batch, which needs additional cross-batch state for duplicates and parent resolution. The 10,000-page limit is a guardrail, not a high-volume processing strategy.
 
 No n8n workflow exists yet: Stage 5 adds the manual and scheduled triggers that call this endpoint.
 
@@ -279,7 +279,7 @@ The PostgreSQL tests are integration tests against a real server. They skip with
 ```bash
 # Against the Compose database (published port is not exposed, so run in a service):
 docker compose run --rm -e TEST_DATABASE_URL=postgresql://automotive:automotive-local-dev@postgres:5432/automotive \
-  pipeline-api pytest tests/test_postgres_repository.py
+  pipeline-api pytest tests/test_postgres_repository.py tests/test_pipeline_runs_integration.py
 ```
 
 Inside Compose the schema is created by PostgreSQL's initialization script or by `pipeline-api` startup, so the tests run against the same schema the application uses.
