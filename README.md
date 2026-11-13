@@ -2,14 +2,14 @@
 
 A staged, auditable data-automation portfolio project using synthetic dealership data. Its target architecture combines a mock CRM API, pipeline API, PostgreSQL, and n8n on one Docker Compose host; current implementation status is tracked by stage below and in `docs/ROADMAP.md`.
 
-The repository is one Python codebase with **two FastAPI processes**. Stage 0 delivered the runnable foundation: package skeleton, health endpoints, container image, Compose services, and tests. Stage 1 adds deterministic synthetic CRM data with bounded pagination; Stage 2 adds Pydantic contracts and pure batch transforms that normalize and quarantine records; Stage 3 adds the PostgreSQL schema and repository that persist entities, run summaries, and rejected payloads. ETL orchestration and n8n arrive in later stages (see `docs/ROADMAP.md`).
+The repository is one Python codebase with **two FastAPI processes**. Stage 0 delivered the runnable foundation: package skeleton, health endpoints, container image, Compose services, and tests. Stage 1 adds deterministic synthetic CRM data with bounded pagination; Stage 2 adds Pydantic contracts and pure batch transforms that normalize and quarantine records; Stage 3 adds the PostgreSQL schema and repository that persist entities, run summaries, and rejected payloads; Stage 4 adds the paginated CRM client, the orchestration service, and `POST /pipeline/runs`. n8n arrives in the next stage (see `docs/ROADMAP.md`).
 
 ## Layout
 
 | Path | Purpose |
 |---|---|
 | `src/automotive_data_integration/crm_api/` | Synthetic CRM source service (`crm-api`) |
-| `src/automotive_data_integration/pipeline_api/` | Consumer service (`pipeline-api`): contracts in `schemas.py`, batch transforms in `transform.py`, persistence in `repository.py` |
+| `src/automotive_data_integration/pipeline_api/` | Consumer service (`pipeline-api`): contracts in `schemas.py`, batch transforms in `transform.py`, CRM extraction in `crm_client.py`, orchestration in `service.py`, persistence in `repository.py`, HTTP routes in `routes.py` |
 | `src/automotive_data_integration/common/` | Health route and server bootstrap shared by both services |
 | `database/schema.sql` | Versioned, idempotent PostgreSQL schema (initialization + startup) |
 | `tests/` | API and transform tests with FastAPI `TestClient`; PostgreSQL integration tests skip without a database URL |
@@ -36,7 +36,7 @@ curl http://127.0.0.1:8001/health   # pipeline-api
 Health responses: `{"status":"ok","service":"crm-api"}` and `{"status":"ok","service":"pipeline-api"}`.
 
 - Host ports bind to `127.0.0.1` only; PostgreSQL is not published.
-- `pipeline-api` starts only after `pg_isready` reports PostgreSQL healthy.
+- `pipeline-api` starts only after both `pg_isready` and the CRM health check succeed.
 - Database files live in `./.data/postgres` (bind-mounted to `/var/lib/postgresql/data`) and survive `docker compose down`. `docker compose down -v` does not remove a bind mount either. Remove that directory only after a deliberate backup, or when you intend a full reset.
 - Containers reach each other by Compose service name, for example `http://crm-api:8000` or host `postgres`.
 - Schema setup is automatic: PostgreSQL applies `database/schema.sql` when it initializes an empty data directory, and `pipeline-api` applies the same idempotent file at startup, so an existing data directory gains missing tables without a reset.
@@ -181,6 +181,60 @@ repository.save_rejected_records(run_id, rejected)  # -> rows written
 
 Editing this file therefore does **not** change an existing database. Later schema changes need an explicit migration file (for example `database/migrations/002_add_column.sql`) applied deliberately, plus a matching change to this baseline for new installs.
 
+## Pipeline runs
+
+`POST /pipeline/runs` executes one full extraction, transformation, and load:
+
+```bash
+curl -X POST http://127.0.0.1:8001/pipeline/runs
+```
+
+```json
+{
+  "run_id": 1,
+  "status": "succeeded",
+  "fetched": 17,
+  "accepted": 15,
+  "rejected": 1,
+  "duplicate": 1
+}
+```
+
+The response is a concise `PipelineRunSummary`; the complete record lives in `pipeline_runs` and `rejected_records`.
+
+### Flow
+
+1. Create a `pipeline_runs` row in `running` status.
+2. Extract every page of `/customers`, `/vehicles`, and `/sales` with the synchronous `httpx` client. It starts at page `1`, requests a bounded `CRM_PAGE_SIZE`, follows `next_page` until it is `null`, validates each envelope, and stops on a repeated or non-progressing cursor instead of looping.
+3. Run the Stage 2 transforms over the complete collections, so a repeated CRM identifier is detected even when the two rows land on different pages.
+4. Validate relationships against this batch: a vehicle needs an accepted customer, and a sale needs an accepted customer and an accepted vehicle. Unresolved rows are quarantined with their exact raw payload and a reason naming the missing parent.
+5. Upsert customers, then vehicles, then sales, so foreign keys are satisfied in parent-before-child order.
+6. Save every rejected row for the run, then finalize the run as `succeeded` — even when individual rows were rejected.
+
+### Counts
+
+| Field | Meaning |
+|---|---|
+| `fetched` | Every source row read across all collections, including duplicates and invalid rows. |
+| `accepted` | Every entity actually persisted by the upserts. |
+| `rejected` | Every quarantined row: validation failures plus unresolved parent references. |
+| `duplicate` | Every repeated non-empty source identifier across the full collected batch. |
+
+With the synthetic fixtures one run reads 17 rows, persists 15 entities (5 customers, 5 vehicles, 5 sales), rejects the malformed `CUST-9001`, and counts the repeated `CUST-0001`. Two consecutive runs return the same counts without adding entity rows or duplicate CRM identifiers.
+
+### Failure behavior
+
+- CRM timeout, HTTP error, malformed envelope, or a cursor that does not advance: the run is finalized as `failed` with the counts reached so far, the endpoint returns `502`, and no source payload is logged or echoed.
+- PostgreSQL failure while starting or writing a run: the run is finalized as `failed` when possible, the endpoint returns `503`, and the response message names only the failure type.
+- Row-level problems never fail the run; they are quarantined and reported through `rejected` and `rejected_records`.
+- If the database is unreachable, marking the run failed can also fail; the run row then remains `running`. That is an operational limitation of storing run state in the same database that failed.
+
+### Memory trade-off
+
+The client collects each entire collection before transforming it. That is a deliberate choice for this demo: the synthetic collections are small, collecting everything makes cross-page duplicate counting exact, and upserts keep the load idempotent. A production-sized source would stream pages and hold only a bounded batch, which needs additional cross-batch state for duplicates and parent resolution.
+
+No n8n workflow exists yet: Stage 5 adds the manual and scheduled triggers that call this endpoint.
+
 ## Local development
 
 ```powershell
@@ -215,7 +269,8 @@ The console scripts `crm-api` and `pipeline-api` start the same apps using `APP_
 ```bash
 .venv/Scripts/python.exe -m pytest tests/test_crm_api_health.py tests/test_crm_api_resources.py   # CRM API
 .venv/Scripts/python.exe -m pytest tests/test_pipeline_schemas.py tests/test_pipeline_transforms.py   # contracts and transforms
-.venv/Scripts/python.exe -m pytest                                    # full; PostgreSQL tests skip without a URL
+.venv/Scripts/python.exe -m pytest tests/test_crm_client.py tests/test_pipeline_service.py tests/test_pipeline_api_runs.py   # extraction, orchestration, route
+.venv/Scripts/python.exe -m pytest                                    # full; database and end-to-end tests skip without URLs
 docker compose run --rm crm-api pytest   # inside the image, no host packages needed
 ```
 
@@ -229,6 +284,14 @@ docker compose run --rm -e TEST_DATABASE_URL=postgresql://automotive:automotive-
 
 Inside Compose the schema is created by PostgreSQL's initialization script or by `pipeline-api` startup, so the tests run against the same schema the application uses.
 
+The end-to-end pipeline test needs a live CRM API and PostgreSQL. It skips unless `CRM_BASE_URL` and `DATABASE_URL` (or `TEST_DATABASE_URL`) are set, then runs two real pipeline executions through `TestClient`:
+
+```bash
+docker compose run --rm pipeline-api pytest tests/test_pipeline_runs_integration.py
+```
+
+That test keeps the fixture entities as the portfolio dataset and deletes only the pipeline runs it created; rejected records cascade with them.
+
 ## Running on a G7 server
 
 Machine-specific SSH aliases, usernames, and project paths are intentionally omitted from this public repository. Use your local access instructions to connect, then run these commands from the project checkout:
@@ -238,6 +301,8 @@ git pull --ff-only
 docker compose up -d --build
 docker compose ps
 docker compose run --rm crm-api pytest
+curl -X POST http://127.0.0.1:8001/pipeline/runs
+docker compose run --rm pipeline-api pytest tests/test_pipeline_runs_integration.py
 ```
 
 Do not install Python or system packages on the host; the image supplies dependencies and test tooling.
@@ -289,6 +354,8 @@ Docker image layers, container writable layers/logs, build cache, and network me
 | `POSTGRES_PASSWORD` | `automotive-local-dev` | Local demo only, not a real secret |
 | `APP_HOST` / `APP_PORT` | `0.0.0.0` / `8000` | Set by Compose inside each container |
 | `DATABASE_URL` | derived in Compose | `pipeline-api`: connection string; when set, the schema is initialized at startup |
+| `CRM_BASE_URL` | `http://crm-api:8000` in Compose | `pipeline-api`: CRM source base URL; required to run `POST /pipeline/runs` |
+| `CRM_PAGE_SIZE` | `3` | `pipeline-api`: extraction page size, bounded to `1`–`100` |
 | `TEST_DATABASE_URL` | unset | Only the PostgreSQL integration tests; falls back to `DATABASE_URL` |
 
 `DATABASE_URL` comes from Compose for the pipeline service and is not needed for local unit tests. Keep real credentials out of tracked files; `.env` stays untracked.
@@ -297,7 +364,8 @@ Docker image layers, container writable layers/logs, build cache, and network me
 
 - Single host only: no high availability, TLS, reverse proxy, or secret manager.
 - The image includes test dependencies so the G7 host can run tests in containers; production images would split runtime and test stages.
-- CRM endpoints serve synthetic in-memory fixtures only. Persistence exists, but there is no run endpoint yet and n8n is not wired: Stage 4 adds the paginated CRM client and `POST /pipeline/runs`.
+- CRM endpoints serve synthetic in-memory fixtures only. Stage 4 exposes `POST /pipeline/runs`; n8n is not wired yet, so runs are started with `curl` or a test client.
+- The client collects whole collections in memory before transforming them. That is intentional for this small synthetic dataset; a large source would need bounded streaming plus cross-batch duplicate and relationship state.
 - Duplicate detection compares trimmed CRM identifiers case-sensitively within one supplied batch; cross-run duplicates are handled by the PostgreSQL uniqueness constraint and UPSERT.
-- `sales` enforces that its customer and vehicle exist, but not that the vehicle belongs to that customer; that cross-check is a Stage 4 orchestration concern rather than a database constraint.
+- Relationship validation checks that parents exist and were accepted in the same run. It does not check that a sale's vehicle belongs to the sale's customer; the fixtures satisfy that rule, and enforcing it would be an additional cross-record policy beyond this stage.
 - Schema changes are manual: there is no migration runner yet, so an existing database only changes when an explicit migration file is applied.

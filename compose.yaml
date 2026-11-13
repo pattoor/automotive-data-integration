@@ -63,10 +63,14 @@ services:
       APP_HOST: 0.0.0.0
       APP_PORT: "8000"
       DATABASE_URL: postgresql://${POSTGRES_USER:-automotive}:${POSTGRES_PASSWORD:-automotive-local-dev}@postgres:5432/${POSTGRES_DB:-automotive}
+      CRM_BASE_URL: ${CRM_BASE_URL:-http://crm-api:8000}
+      CRM_PAGE_SIZE: ${CRM_PAGE_SIZE:-3}
     ports:
       - "127.0.0.1:${PIPELINE_API_PORT:-8001}:8000"
     depends_on:
       postgres:
+        condition: service_healthy
+      crm-api:
         condition: service_healthy
     healthcheck: *app-healthcheck
     restart: unless-stopped

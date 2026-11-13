@@ -23,18 +23,36 @@ The two FastAPI applications live in one Python package and can use one Docker i
 ## Data flow
 
 ```text
-n8n (manual or schedule)
+n8n (manual or schedule)          curl / test client (until Stage 5)
         │ POST /pipeline/runs
         ▼
-pipeline-api ── paginated GET requests ──► crm-api
-     │                                        synthetic JSON
-     ├── normalize and deduplicate batches
+pipeline-api
+     │
+     ├── create pipeline_runs row (running)
+     ├── GET /customers, /vehicles, /sales ── paginated ──► crm-api
+     │        follow next_page until null, preserve order
+     ├── normalize and deduplicate complete batches
      ├── validate each record with Pydantic
-     ├── store valid entities with PostgreSQL UPSERT
-     └── store run summary and rejected payloads
+     ├── validate relationships inside the batch
+     │        vehicle → accepted customer
+     │        sale → accepted customer and accepted vehicle
+     ├── store valid entities with PostgreSQL UPSERT (parents first)
+     ├── store rejected payloads (validation and unresolved relationships)
+     └── finalize run as succeeded or failed with counts
 ```
 
 Pandas is limited to batch-oriented normalization and duplicate analysis where it improves clarity. Pydantic remains the record-level validation boundary; Pandas is not used as an ORM or API schema layer.
+
+## Pipeline run semantics
+
+`POST /pipeline/runs` is synchronous and returns a concise summary: `run_id`, `status`, and `fetched`, `accepted`, `rejected`, and `duplicate` counts.
+
+- `fetched` counts every source row read, `accepted` every entity persisted, `rejected` every quarantined row (validation or unresolved parent), and `duplicate` every repeated non-empty source identifier.
+- A run starts as `running` before extraction. A CRM or PostgreSQL failure finalizes it as `failed` with an error message that names only the failure class, and the endpoint answers `502` (source) or `503` (database/configuration). Raw payloads and credentials are never logged or returned.
+- Row-level problems do not abort a run: validation failures and unresolved relationships are stored in `rejected_records`, and the run still finalizes as `succeeded`.
+- The client collects each complete collection before transforming it. For these tiny synthetic fixtures that makes cross-page duplicate counting exact; a production-sized source would stream bounded pages and keep separate cross-batch state. This is an explicit demo trade-off, not a scalable ingestion design.
+- If PostgreSQL is unreachable while trying to mark a failed run, the run row can remain `running`. Run state lives in the same database that failed, so this residual state is unavoidable without an external coordinator.
+- No n8n workflow exists yet; Stage 5 adds a versioned workflow that calls this endpoint.
 
 ## Persistence and idempotency
 
@@ -52,8 +70,8 @@ Pandas is limited to batch-oriented normalization and duplicate analysis where i
 - Writes use `INSERT ... ON CONFLICT ... DO UPDATE`, so a rerun updates matching entities instead of inserting duplicates; repeated identifiers inside one batch are applied in order and the last value wins.
 - A `pipeline_runs` record captures status, timestamps, and fetched/accepted/rejected/duplicate counts plus an error message when a run fails.
 - A `rejected_records` record captures the run, entity type, source identifier when available, raw synthetic payload as `jsonb`, and validation/processing reason.
-- Foreign keys connect vehicles to their customer and sales to their customer and vehicle. Invalid or unresolvable records are rejected rather than silently creating broken references; the repository propagates the PostgreSQL violation instead of hiding it.
-- The schema does not verify that a sale's vehicle belongs to the sale's customer; that cross-record rule belongs to orchestration, where both records are known.
+- Foreign keys connect vehicles to their customer and sales to their customer and vehicle. Orchestration rejects vehicles and sales whose parents were not accepted in the same run, so a broken reference is quarantined instead of reaching PostgreSQL; the repository still propagates a violation if one somehow occurs.
+- The schema and pipeline do not verify that a sale's vehicle belongs to the sale's customer. The synthetic fixtures happen to satisfy that rule; enforcing it would be an additional cross-record policy beyond this stage.
 
 Source duplicates within one run and duplicate database rows across repeated runs are distinct cases. Pandas counts repeated non-empty CRM IDs across the batch. Pydantic validates every row independently; invalid rows stay rejected, and among valid rows with a repeated ID the first valid row wins. Thus an invalid first occurrence cannot suppress a later valid record, and a malformed repeated row may contribute to both duplicate and rejection counts. PostgreSQL uniqueness and UPSERT handle duplicates across repeated executions.
 
@@ -107,6 +125,8 @@ Production hardening is deliberately outside the first implementation: TLS/rever
 | PostgreSQL constraints and SQL UPSERT | Idempotency is enforced at the database boundary and remains visible to learners. | Application-only duplicate checks can race and are not a durable uniqueness guarantee. An ORM can be added later, but direct SQL keeps this small schema and upsert behavior explicit. |
 | Idempotent baseline script plus explicit migrations | A fresh Compose database and the already-initialized G7 database reach the same state from one readable file, while applied databases are never mutated by editing it. | A full migration tool (Alembic, Flyway) automates version tracking and rollbacks, but adds configuration and a second execution path for a five-table schema. Editing the baseline in place would silently skip existing databases. |
 | Pydantic per record; Pandas only for useful batches | Clear validation errors and focused use of the requested data-frame tool. | Using Pandas for every step adds overhead; using only Python collections is simpler for tiny data but misses a useful batch-processing example. |
+| Collect whole CRM collections before transform | Cross-page duplicates and parent references are resolved exactly with no cross-batch state, which is adequate for a few synthetic rows. | Streaming bounded pages scales memory better but needs cross-batch duplicate/parent tracking, retry semantics, and more code than this demo justifies. |
+| Persist a run row before extraction | Failures become queryable with counts instead of leaving no trace, and a run has one lifecycle from `running` to `succeeded`/`failed`. | Logging-only reporting is simpler but loses status and counts; an external queue/state machine adds operational weight beyond a single-host demo. |
 | Synthetic fixtures, including documented bad records | Demonstrates validation and quarantine without personal or commercial data. | Live CRM credentials would make the demo unsafe, non-reproducible, and out of scope. |
 
 ## Out of scope
