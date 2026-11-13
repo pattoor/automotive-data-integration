@@ -257,7 +257,8 @@ n8n's `/workflows` mount is a convenience for copying the file out of the contai
 2. Complete n8n's first-run owner-account setup. That account is local to `./n8n/data`; no credentials belong in this repository.
 3. **Workflows → ⋯ → Import from File**, and select `n8n/workflows/automotive-pipeline.json` (or `/workflows/automotive-pipeline.json` inside the container).
 4. Open the imported workflow and click **Execute workflow** once. A green `Run Pipeline` node with the `run_id`/counts JSON proves the call reached `POST /pipeline/runs`.
-5. Publish (activate) the workflow to enable the schedule. It stays inactive after import so nothing runs unexpectedly.
+
+For this practice project, stop after the manual test: **leave the workflow unpublished and inactive**. Publishing is optional and only enables automatic scheduled executions; it is not required to run the workflow manually.
 
 The imported workflow contains exactly three nodes and no data logic:
 
@@ -267,9 +268,19 @@ The imported workflow contains exactly three nodes and no data logic:
 | `Schedule Trigger` | `n8n-nodes-base.scheduleTrigger` v1.3 | Daily at 09:00 in the workflow timezone (`UTC`) |
 | `Run Pipeline` | `n8n-nodes-base.httpRequest` v4.5 | `POST http://pipeline-api:8000/pipeline/runs`, no authentication, 120-second timeout, no body |
 
-Both triggers connect directly to `Run Pipeline`; the workflow has no transformation, branching, retry, or database node.
+Both triggers connect directly to `Run Pipeline`. That HTTP node calls `pipeline-api`, which then calls the CRM API, applies the Python transforms and validation, and writes to PostgreSQL. The workflow has no transformation, branching, retry, or database node.
 
-**Adjusting the schedule**: open `Schedule Trigger`, change the hour/minute (or switch to a cron expression) in the editor. To keep the file authoritative, update `n8n/workflows/automotive-pipeline.json` the same way — either edit `rule.interval` by hand (`field: "days"`, `triggerAtHour`, `triggerAtMinute`) or re-export the workflow after editing it in the UI. Changing the instance timezone (`GENERIC_TIMEZONE`) also shifts when "09:00" happens, so keep it `UTC` when the intent is a UTC schedule.
+### Modifying and re-synchronizing the workflow
+
+`n8n/workflows/automotive-pipeline.json` is the version-controlled source of truth. The running n8n instance stores its own copy in `./n8n/data`; editing one copy does not automatically update the other.
+
+- **Change the schedule**: edit the `Schedule Trigger` in n8n or update its `rule.interval` in the JSON. `daysInterval: 1`, `triggerAtHour: 9`, and `triggerAtMinute: 0` mean daily at 09:00. Keep the workflow timezone and `GENERIC_TIMEZONE` aligned (currently `UTC`).
+- **Change the HTTP call**: edit the `Run Pipeline` node's method, URL, or timeout in n8n or the corresponding JSON parameters. The current contract is an unauthenticated `POST` to `http://pipeline-api:8000/pipeline/runs` with a 120-second timeout. Keep extraction, transformation, validation, and database logic in Python.
+- **Sync UI changes to Git**: use the workflow's **More actions → Export JSON**, then update and commit `n8n/workflows/automotive-pipeline.json`. Do not include n8n's database, encryption key, credentials, or owner account in Git.
+- **Sync JSON changes to n8n**: in the editor, use **More actions → Import → From File** and select the updated export. Review the resulting workflow and run it manually before relying on a change. Avoid creating duplicate workflow copies.
+- **Change the editor port**: if the default host port 5678 is occupied, set `N8N_UI_PORT` to a free port in the ignored project `.env`; keep the Compose binding on `127.0.0.1` and use an SSH tunnel for a remote host.
+
+The workflow remains inactive after import and after these edits unless explicitly published. For the current practice setup, leave it inactive; manual execution remains available in the editor.
 
 `tests/test_n8n_workflow.py` pins the import contract (one manual trigger, one schedule trigger, one HTTP node, the exact URL/method/timeout, no credentials, inactive on import), so a broken export fails the Python test suite without Docker.
 
@@ -347,9 +358,9 @@ curl -X POST http://127.0.0.1:8001/pipeline/runs
 docker compose run --rm pipeline-api pytest tests/test_pipeline_runs_integration.py
 ```
 
-Then import the workflow once through the editor at `http://127.0.0.1:5678` (see [n8n automation](#n8n-automation)), execute it manually to confirm a real run, and publish it when you want the daily 09:00 UTC schedule to take effect.
+Then open the editor through an SSH tunnel and import the workflow once (see [n8n automation](#n8n-automation)). The default host port is 5678; the current G7 project's ignored `.env` uses `N8N_UI_PORT=5679` because 5678 was already occupied. Execute the workflow manually to confirm a real run. For this practice project, leave it unpublished and inactive; publishing is optional if you later want scheduled executions.
 
-Do not install Python or system packages on the host; the image supplies dependencies and test tooling. If the editor is unreachable, an SSH tunnel to `127.0.0.1:5678` on the G7 host is the intended access path — the port is never published on a LAN interface.
+Do not install Python or system packages on the host; the image supplies dependencies and test tooling. The editor remains bound to loopback on the G7 host, never a LAN interface. Use your local SSH instructions to forward the configured `N8N_UI_PORT` to a free local port, then open that local URL in a browser.
 
 ## Storage
 

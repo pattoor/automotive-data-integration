@@ -18,7 +18,7 @@ Build a working single-host demo in small, independently testable stages. Do not
 ## Acceptance criteria
 
 - [ ] A clean checkout can start the synthetic CRM, pipeline API, PostgreSQL, and n8n with Docker Compose.
-- [ ] n8n can trigger a pipeline run manually and on a configured schedule.
+- [x] n8n supports manual execution and defines a daily schedule; automatic scheduled runs are optional and intentionally disabled for this practice setup.
 - [ ] CRM pagination is fully consumed and valid customers, vehicles, and sales are persisted.
 - [ ] Invalid synthetic records are rejected with their payload and reason recorded.
 - [ ] Two executions do not increase entity row counts or create duplicate CRM IDs.
@@ -56,5 +56,5 @@ Build a working single-host demo in small, independently testable stages. Do not
 - [x] Stage 5 n8n automation (local): Compose service pinned to `n8nio/n8n:2.47.7` with `GENERIC_TIMEZONE=UTC`, `N8N_SECURE_COOKIE=false` for the loopback demo, telemetry/personalization/version checks disabled, editor bound to `127.0.0.1:${N8N_UI_PORT:-5678}`, state bind-mounted at `./n8n/data` → `/home/node/.n8n`, and the tracked export read-only at `./n8n/workflows` → `/workflows`. `n8n/workflows/automotive-pipeline.json` holds exactly three nodes: Manual Trigger v1 and Schedule Trigger v1.3 (daily 09:00 UTC) both wired to one HTTP Request v4.5 (`POST http://pipeline-api:8000/pipeline/runs`, no auth, 120-second timeout), inactive on import. Verified locally: `docker compose config --quiet` OK, workflow JSON parses with the standard `json` module, `tests/test_n8n_workflow.py` 5 passed. `n8n/` is excluded from the Python build context.
 - [x] Stage 5 G7 UI import and manual runtime: created ignored `./n8n/data` as UID/GID 1000, started n8n 2.47.7, and imported `n8n/workflows/automotive-pipeline.json` through the editor. The manual execution succeeded in n8n (execution 1); PostgreSQL recorded run 11 as `succeeded` with fetched/accepted/rejected/duplicate `17/15/1/1`. Entity tables remain at five rows each. G7 port 5678 was occupied, so the ignored project `.env` sets `N8N_UI_PORT=5679`; the port remains loopback-only.
 - [x] Versioned n8n workflow export and Compose integration.
-- [ ] Publish/activate the daily 09:00 UTC schedule after explicit user confirmation; the imported workflow remains inactive.
+- [x] Keep the daily 09:00 UTC schedule inactive for this practice project, per user preference; manual execution is verified and documented.
 - [ ] End-to-end tests, CI, and complete documentation.
