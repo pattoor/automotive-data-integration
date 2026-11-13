@@ -31,9 +31,15 @@ class RejectedRecord:
 
 @dataclass(frozen=True)
 class TransformResult(Generic[Record]):
-    """Accepted records, quarantined records, and the source duplicate count."""
+    """Accepted records, their aligned source payloads, quarantined rows, and duplicates.
+
+    ``accepted_raw`` is index-aligned with ``accepted`` and holds a deep copy of
+    the source row, so a later relationship check can quarantine the exact
+    payload that produced an accepted record.
+    """
 
     accepted: list[Record]
+    accepted_raw: list[Any]
     rejected: list[RejectedRecord]
     duplicate_count: int
 
@@ -59,6 +65,7 @@ def _transform(
     duplicate_count = _count_duplicate_identifiers(records)
 
     accepted: list[Record] = []
+    accepted_raw: list[Any] = []
     rejected: list[RejectedRecord] = []
     accepted_ids: set[str] = set()
     for record in records:
@@ -79,9 +86,13 @@ def _transform(
             continue
         accepted_ids.add(normalized.crm_id)
         accepted.append(normalized)
+        accepted_raw.append(deepcopy(record))
 
     return TransformResult(
-        accepted=accepted, rejected=rejected, duplicate_count=duplicate_count
+        accepted=accepted,
+        accepted_raw=accepted_raw,
+        rejected=rejected,
+        duplicate_count=duplicate_count,
     )
 
 

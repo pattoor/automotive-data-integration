@@ -125,3 +125,21 @@ class Sale(NormalizedRecord):
     sale_date: date
     amount_usd: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
     status: Status
+
+
+class PipelineRunSummary(BaseModel):
+    """The concise result of one pipeline execution.
+
+    ``fetched`` counts every source row read, ``accepted`` every entity
+    persisted, ``rejected`` every quarantined row (validation or relationship),
+    and ``duplicate`` every repeated source identifier across the full batch.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    run_id: int
+    status: str
+    fetched: int
+    accepted: int
+    rejected: int
+    duplicate: int

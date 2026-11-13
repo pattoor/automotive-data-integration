@@ -276,6 +276,25 @@ def test_transform_does_not_mutate_the_source_records():
     assert records == before
 
 
+def test_accepted_records_keep_aligned_raw_payload_snapshots():
+    records = [
+        raw_customer("CUST-0001", city="Springfield"),
+        raw_customer("CUST-0001", email="not-an-email"),
+        raw_customer("CUST-0002", city="Riverton"),
+    ]
+    expected_raw = copy.deepcopy([records[0], records[2]])
+
+    result = transform_customers(records)
+    records[0]["city"] = "Mutated"
+    records[2]["city"] = "Mutated"
+
+    assert [customer.crm_id for customer in result.accepted] == [
+        "CUST-0001",
+        "CUST-0002",
+    ]
+    assert result.accepted_raw == expected_raw
+
+
 def test_crm_customer_fixtures_yield_the_documented_batch_counts():
     result = transform_customers(CUSTOMERS)
 
