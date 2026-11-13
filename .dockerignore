@@ -3,6 +3,7 @@
 .venv
 .data
 .backups
+n8n
 *.egg-info
 .env
 .env.*

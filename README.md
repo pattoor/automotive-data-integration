@@ -2,7 +2,7 @@
 
 A staged, auditable data-automation portfolio project using synthetic dealership data. Its target architecture combines a mock CRM API, pipeline API, PostgreSQL, and n8n on one Docker Compose host; current implementation status is tracked by stage below and in `docs/ROADMAP.md`.
 
-The repository is one Python codebase with **two FastAPI processes**. Stage 0 delivered the runnable foundation: package skeleton, health endpoints, container image, Compose services, and tests. Stage 1 adds deterministic synthetic CRM data with bounded pagination; Stage 2 adds Pydantic contracts and pure batch transforms that normalize and quarantine records; Stage 3 adds the PostgreSQL schema and repository that persist entities, run summaries, and rejected payloads; Stage 4 adds the paginated CRM client, the orchestration service, and `POST /pipeline/runs`. n8n arrives in the next stage (see `docs/ROADMAP.md`).
+The repository is one Python codebase with **two FastAPI processes**. Stage 0 delivered the runnable foundation: package skeleton, health endpoints, container image, Compose services, and tests. Stage 1 adds deterministic synthetic CRM data with bounded pagination; Stage 2 adds Pydantic contracts and pure batch transforms that normalize and quarantine records; Stage 3 adds the PostgreSQL schema and repository that persist entities, run summaries, and rejected payloads; Stage 4 adds the paginated CRM client, the orchestration service, and `POST /pipeline/runs`; Stage 5 adds the pinned n8n service and a versioned workflow with a manual trigger and a daily schedule (see `docs/ROADMAP.md`).
 
 ## Layout
 
@@ -12,10 +12,12 @@ The repository is one Python codebase with **two FastAPI processes**. Stage 0 de
 | `src/automotive_data_integration/pipeline_api/` | Consumer service (`pipeline-api`): contracts in `schemas.py`, batch transforms in `transform.py`, CRM extraction in `crm_client.py`, orchestration in `service.py`, persistence in `repository.py`, HTTP routes in `routes.py` |
 | `src/automotive_data_integration/common/` | Health route and server bootstrap shared by both services |
 | `database/schema.sql` | Versioned, idempotent PostgreSQL schema (initialization + startup) |
-| `tests/` | API and transform tests with FastAPI `TestClient`; PostgreSQL integration tests skip without a database URL |
-| `compose.yaml` | Two APIs plus PostgreSQL (`postgres:16-alpine`) |
+| `n8n/workflows/automotive-pipeline.json` | Versioned n8n workflow export: manual and daily schedule triggers calling the pipeline endpoint |
+| `tests/` | API and transform tests with FastAPI `TestClient`; PostgreSQL integration tests skip without a database URL; n8n workflow contract test |
+| `compose.yaml` | Two APIs plus PostgreSQL (`postgres:16-alpine`) and n8n (`n8nio/n8n:2.47.7`) |
 | `Dockerfile` | One image, one package, two startup commands |
 | `.data/` | Local container data (PostgreSQL files; git-ignored) |
+| `n8n/data/` | n8n state: SQLite database, encryption key, local user settings (git-ignored) |
 | `.backups/` | Host-side database dumps (git-ignored) |
 
 ## Requirements
@@ -27,8 +29,9 @@ The repository is one Python codebase with **two FastAPI processes**. Stage 0 de
 
 ```bash
 cp .env.example .env        # optional; defaults work without it
+mkdir -p n8n/data           # n8n writes its SQLite database and key here
 docker compose up --build
-docker compose ps           # wait until all services are healthy
+docker compose ps           # wait until the APIs and database are healthy
 curl http://127.0.0.1:8000/health   # crm-api
 curl http://127.0.0.1:8001/health   # pipeline-api
 ```
@@ -36,9 +39,10 @@ curl http://127.0.0.1:8001/health   # pipeline-api
 Health responses: `{"status":"ok","service":"crm-api"}` and `{"status":"ok","service":"pipeline-api"}`.
 
 - Host ports bind to `127.0.0.1` only; PostgreSQL is not published.
-- `pipeline-api` starts only after both `pg_isready` and the CRM health check succeed.
+- `pipeline-api` starts only after both `pg_isready` and the CRM health check succeed; `n8n` starts after `pipeline-api` is healthy.
 - Database files live in `./.data/postgres` (bind-mounted to `/var/lib/postgresql/data`) and survive `docker compose down`. `docker compose down -v` does not remove a bind mount either. Remove that directory only after a deliberate backup, or when you intend a full reset.
-- Containers reach each other by Compose service name, for example `http://crm-api:8000` or host `postgres`.
+- n8n state lives in `./n8n/data` (bind-mounted to `/home/node/.n8n`) and also survives `docker compose down`. The directory must be writable by the container's `node` user (UID/GID 1000), so create it as your normal project user before the first start. `n8n` has no Compose health check; open `http://127.0.0.1:5678` and check the editor loads.
+- Containers reach each other by Compose service name, for example `http://crm-api:8000`, `http://pipeline-api:8000`, or host `postgres`.
 - Schema setup is automatic: PostgreSQL applies `database/schema.sql` when it initializes an empty data directory, and `pipeline-api` applies the same idempotent file at startup, so an existing data directory gains missing tables without a reset.
 
 ## CRM API
@@ -233,7 +237,41 @@ With the synthetic fixtures one run reads 17 rows, persists 15 entities (5 custo
 
 The client collects each entire collection before transforming it. That is a deliberate choice for this demo: the synthetic collections are small, collecting everything makes cross-page duplicate counting exact, and upserts keep the load idempotent. A production-sized source would stream pages and hold only a bounded batch, which needs additional cross-batch state for duplicates and parent resolution. The 10,000-page limit is a guardrail, not a high-volume processing strategy.
 
-No n8n workflow exists yet: Stage 5 adds the manual and scheduled triggers that call this endpoint.
+## n8n automation
+
+`compose.yaml` pins the official `n8nio/n8n:2.47.7` image. n8n owns only scheduling and the HTTP call: normalization, validation, persistence, and run bookkeeping stay in `pipeline-api`.
+
+| Setting | Value |
+|---|---|
+| Editor URL | `http://127.0.0.1:5678` (host port `N8N_UI_PORT`, bound to loopback only) |
+| Instance timezone | `UTC` (`GENERIC_TIMEZONE`), matching the workflow timezone |
+| Session cookie | `N8N_SECURE_COOKIE=false`, required because the loopback demo has no TLS |
+| Telemetry / personalization / update checks | Disabled through `N8N_DIAGNOSTICS_ENABLED`, `N8N_PERSONALIZATION_ENABLED`, `N8N_VERSION_NOTIFICATIONS_ENABLED` |
+| State | Bind mount `./n8n/data` → `/home/node/.n8n` |
+| Workflow export | `./n8n/workflows` → `/workflows` (read-only) |
+| Credentials | None: the endpoint is unauthenticated inside the Compose network |
+
+n8n's `/workflows` mount is a convenience for copying the file out of the container, not an auto-import. Importing is a deliberate one-time action in the editor:
+
+1. Start the stack and open `http://127.0.0.1:5678`.
+2. Complete n8n's first-run owner-account setup. That account is local to `./n8n/data`; no credentials belong in this repository.
+3. **Workflows → ⋯ → Import from File**, and select `n8n/workflows/automotive-pipeline.json` (or `/workflows/automotive-pipeline.json` inside the container).
+4. Open the imported workflow and click **Execute workflow** once. A green `Run Pipeline` node with the `run_id`/counts JSON proves the call reached `POST /pipeline/runs`.
+5. Publish (activate) the workflow to enable the schedule. It stays inactive after import so nothing runs unexpectedly.
+
+The imported workflow contains exactly three nodes and no data logic:
+
+| Node | Type / version | Behavior |
+|---|---|---|
+| `Manual Trigger` | `n8n-nodes-base.manualTrigger` v1 | Runs the pipeline when you click Execute |
+| `Schedule Trigger` | `n8n-nodes-base.scheduleTrigger` v1.3 | Daily at 09:00 in the workflow timezone (`UTC`) |
+| `Run Pipeline` | `n8n-nodes-base.httpRequest` v4.5 | `POST http://pipeline-api:8000/pipeline/runs`, no authentication, 120-second timeout, no body |
+
+Both triggers connect directly to `Run Pipeline`; the workflow has no transformation, branching, retry, or database node.
+
+**Adjusting the schedule**: open `Schedule Trigger`, change the hour/minute (or switch to a cron expression) in the editor. To keep the file authoritative, update `n8n/workflows/automotive-pipeline.json` the same way — either edit `rule.interval` by hand (`field: "days"`, `triggerAtHour`, `triggerAtMinute`) or re-export the workflow after editing it in the UI. Changing the instance timezone (`GENERIC_TIMEZONE`) also shifts when "09:00" happens, so keep it `UTC` when the intent is a UTC schedule.
+
+`tests/test_n8n_workflow.py` pins the import contract (one manual trigger, one schedule trigger, one HTTP node, the exact URL/method/timeout, no credentials, inactive on import), so a broken export fails the Python test suite without Docker.
 
 ## Local development
 
@@ -270,11 +308,14 @@ The console scripts `crm-api` and `pipeline-api` start the same apps using `APP_
 .venv/Scripts/python.exe -m pytest tests/test_crm_api_health.py tests/test_crm_api_resources.py   # CRM API
 .venv/Scripts/python.exe -m pytest tests/test_pipeline_schemas.py tests/test_pipeline_transforms.py   # contracts and transforms
 .venv/Scripts/python.exe -m pytest tests/test_crm_client.py tests/test_pipeline_service.py tests/test_pipeline_api_runs.py   # extraction, orchestration, route
+.venv/Scripts/python.exe -m pytest tests/test_n8n_workflow.py   # n8n workflow import contract (needs the checkout, not the API image)
 .venv/Scripts/python.exe -m pytest                                    # full; database and end-to-end tests skip without URLs
 docker compose run --rm crm-api pytest   # inside the image, no host packages needed
 ```
 
 The PostgreSQL tests are integration tests against a real server. They skip with a clear reason unless `TEST_DATABASE_URL` or `DATABASE_URL` is set, so a laptop without a database still reports a green suite. They create rows under a unique per-test identifier prefix and delete only those rows; they never truncate or drop tables.
+
+`tests/test_n8n_workflow.py` parses the versioned workflow export and fails if the triggers, HTTP call, or inactive-on-import contract changes. The export lives outside the API image build context, so that test skips inside `docker compose run --rm crm-api pytest` and runs locally or anywhere the full checkout is present.
 
 ```bash
 # Against the Compose database (published port is not exposed, so run in a service):
@@ -298,6 +339,7 @@ Machine-specific SSH aliases, usernames, and project paths are intentionally omi
 
 ```bash
 git pull --ff-only
+mkdir -p n8n/data           # once; owned by the project user (UID 1000), matching the container's node user
 docker compose up -d --build
 docker compose ps
 docker compose run --rm crm-api pytest
@@ -305,7 +347,9 @@ curl -X POST http://127.0.0.1:8001/pipeline/runs
 docker compose run --rm pipeline-api pytest tests/test_pipeline_runs_integration.py
 ```
 
-Do not install Python or system packages on the host; the image supplies dependencies and test tooling.
+Then import the workflow once through the editor at `http://127.0.0.1:5678` (see [n8n automation](#n8n-automation)), execute it manually to confirm a real run, and publish it when you want the daily 09:00 UTC schedule to take effect.
+
+Do not install Python or system packages on the host; the image supplies dependencies and test tooling. If the editor is unreachable, an SSH tunnel to `127.0.0.1:5678` on the G7 host is the intended access path — the port is never published on a LAN interface.
 
 ## Storage
 
@@ -314,12 +358,15 @@ Persistent project data stays inside the repository folder, not in Docker's shar
 | Item | Host location | Container path |
 |---|---|---|
 | PostgreSQL data | `./.data/postgres` | `/var/lib/postgresql/data` |
-| n8n state (later stage) | `./.data/n8n` | its n8n data directory |
+| n8n state | `./n8n/data` | `/home/node/.n8n` |
+| n8n workflow export (tracked in Git) | `./n8n/workflows` | `/workflows` (read-only) |
 
 - `.data/` is ignored by Git and by the Docker build context, so database files are never committed or baked into the image.
+- `n8n/data/` is ignored by Git, and the whole `n8n/` directory is excluded from the Python image build context; only `n8n/workflows/` is tracked.
 - `docker compose down` preserves these files; they are plain directories on the host.
 - `docker compose down -v` removes named volumes only, so it does **not** delete a bind mount.
 - PostgreSQL owns its data files as container UID 70 on G7; direct host reads or permission changes are not expected. Query or back up through the container instead of using host `chmod`/`chown`.
+- n8n runs as `node` (UID/GID 1000), so `./n8n/data` must be owned by that UID. On G7 the project user is UID 1000, so creating the directory as that user is enough — no `chown` and no `sudo`.
 - Stop the stack with `docker compose down` and make a deliberate backup before resetting data. Since the container owns `.data/postgres`, do not try to delete or change its permissions from the host; use a project-scoped reset procedure only when intentionally requested.
 
 Back up to a user-writable folder inside the project:
@@ -349,6 +396,7 @@ Docker image layers, container writable layers/logs, build cache, and network me
 |---|---|---|
 | `CRM_API_PORT` | `8000` | Published host port for `crm-api` |
 | `PIPELINE_API_PORT` | `8001` | Published host port for `pipeline-api` |
+| `N8N_UI_PORT` | `5678` | Published host port for the n8n editor (loopback only; the container still listens on `5678`) |
 | `POSTGRES_DB` | `automotive` | PostgreSQL database name |
 | `POSTGRES_USER` | `automotive` | PostgreSQL role |
 | `POSTGRES_PASSWORD` | `automotive-local-dev` | Local demo only, not a real secret |
@@ -364,7 +412,8 @@ Docker image layers, container writable layers/logs, build cache, and network me
 
 - Single host only: no high availability, TLS, reverse proxy, or secret manager.
 - The image includes test dependencies so the G7 host can run tests in containers; production images would split runtime and test stages.
-- CRM endpoints serve synthetic in-memory fixtures only. Stage 4 exposes `POST /pipeline/runs`; n8n is not wired yet, so runs are started with `curl` or a test client.
+- CRM endpoints serve synthetic in-memory fixtures only. n8n owns only the manual trigger, the daily schedule, and the HTTP call; the ETL logic stays in `pipeline-api`.
+- n8n runs on SQLite in `./n8n/data` with no credentials, no TLS, and a loopback-only editor port. That suits a single-user demo, not a shared or internet-facing installation.
 - The client collects whole collections in memory before transforming them. That is intentional for this small synthetic dataset; a large source would need bounded streaming plus cross-batch duplicate and relationship state.
 - Duplicate detection compares trimmed CRM identifiers case-sensitively within one supplied batch; cross-run duplicates are handled by the PostgreSQL uniqueness constraint and UPSERT.
 - Relationship validation checks that parents exist and were accepted in the same run. It does not check that a sale's vehicle belongs to the sale's customer; the fixtures satisfy that rule, and enforcing it would be an additional cross-record policy beyond this stage.
