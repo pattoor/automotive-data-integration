@@ -27,6 +27,14 @@ pytestmark = pytest.mark.skipif(
     reason="set DATABASE_URL (or TEST_DATABASE_URL) and CRM_BASE_URL for the end-to-end pipeline test",
 )
 
+
+@pytest.fixture(autouse=True)
+def use_the_same_database_for_api_and_assertions(monkeypatch):
+    """Make the app and test queries target TEST_DATABASE_URL consistently."""
+    if DATABASE_URL:
+        monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
+
+
 CUSTOMER_IDS = [f"CUST-{number:04d}" for number in range(1, 6)]
 VEHICLE_IDS = [f"VEH-{number:04d}" for number in range(1, 6)]
 SALE_IDS = [f"SALE-{number:04d}" for number in range(1, 6)]
@@ -100,6 +108,7 @@ def assert_summary(summary: dict[str, Any]) -> None:
 
 
 def test_two_runs_are_idempotent_and_quarantine_the_malformed_customer():
+    assert os.environ["DATABASE_URL"] == DATABASE_URL
     expected_bad_customer = fetch_bad_customer()
     run_ids: list[int] = []
     try:
