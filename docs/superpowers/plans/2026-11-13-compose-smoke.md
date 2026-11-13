@@ -33,7 +33,7 @@
 - Consumes: the running `pipeline-api` service at `http://pipeline-api:8000`, its Compose-provided `DATABASE_URL`, and PostgreSQL tables from `database/schema.sql`.
 - Produces: `test_two_live_http_runs_are_idempotent_and_quarantine_the_bad_customer`, runnable with `docker compose exec -T pipeline-api pytest tests/test_compose_smoke.py`.
 
-- [ ] **Step 1: Add the test module**
+- [x] **Step 1: Add the test module**
 
 ```python
 """Smoke-test the running Compose services through the real HTTP boundary."""
@@ -157,11 +157,11 @@ def assert_successful_response(
     return summary
 ```
 
-- [ ] **Step 2: Prepare only the project-local n8n state directory when needed**
+- [x] **Step 2: Prepare only the project-local n8n state directory when needed**
 
 On a fresh Linux checkout, create `n8n/data` as the project user before starting Compose. On G7, verify the existing directory is still owned by UID/GID 1000; do not use `sudo` or change PostgreSQL permissions.
 
-- [ ] **Step 3: Verify the focused test against Compose**
+- [x] **Step 3: Verify the focused test against Compose**
 
 Run from the repository root after the stack is available:
 
@@ -172,13 +172,13 @@ docker compose exec -T -e COMPOSE_SMOKE_TEST=1 pipeline-api pytest tests/test_co
 
 Expected: three tests pass (two helper unit tests plus the live HTTP integration test), both real HTTP responses contain `17/15/1/1`, entity counts are unchanged, and only the two test-created run rows are deleted in `finally`.
 
-- [ ] **Step 4: Verify local test discovery remains safe without Compose**
+- [x] **Step 4: Verify local test discovery remains safe without Compose**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/test_compose_smoke.py -rs`
 
 Expected: both helper unit tests pass and the live smoke test skips with the stated reason unless both `DATABASE_URL` and `COMPOSE_SMOKE_TEST=1` are present; it must not attempt network access or mutate a local database when the marker is absent.
 
-- [ ] **Step 5: Run the complete in-container suite**
+- [x] **Step 5: Run the complete in-container suite**
 
 Run: `docker compose exec -T pipeline-api pytest`
 
@@ -192,11 +192,11 @@ docker compose exec -T -e COMPOSE_SMOKE_TEST=1 pipeline-api pytest tests/test_co
 
 Expected: one live test passes, its two run IDs are distinct, and the test removes only its created run rows.
 
-- [ ] **Step 6: Record evidence after the test passes**
+- [x] **Step 6: Record evidence after the test passes**
 
 Update the Stage 6 entry in `docs/ROADMAP.md` with the exact focused and full in-container results. Do not change the n8n inactive state or clean up portfolio entity fixtures.
 
-- [ ] **Step 7: Commit the smoke-test work unit**
+- [x] **Step 7: Commit the smoke-test work unit**
 
 Run `git add tests/test_compose_smoke.py docs/ROADMAP.md && git commit -m "test: add live Compose smoke coverage"` after the verification results are recorded.
 
