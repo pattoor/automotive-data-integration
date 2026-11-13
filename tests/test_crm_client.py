@@ -266,6 +266,138 @@ def test_envelope_page_must_match_the_requested_page():
         CrmClient(BASE_URL, transport=serve(pages, [])).fetch_customers()
 
 
+@pytest.mark.parametrize(
+    ("page_size", "total", "total_pages"),
+    [
+        pytest.param(2, 7, 3, id="page-size-mismatch"),
+        pytest.param(3, 7, 2, id="total-pages-mismatch"),
+    ],
+)
+def test_first_page_metadata_must_match_the_request_and_total(
+    page_size, total, total_pages
+):
+    pages = {
+        1: envelope(
+            [record("CUST-1")],
+            page=1,
+            page_size=page_size,
+            total=total,
+            total_pages=total_pages,
+            next_page=None,
+        )
+    }
+
+    with pytest.raises(CrmClientError):
+        CrmClient(BASE_URL, transport=serve(pages, [])).fetch_customers()
+
+
+@pytest.mark.parametrize(
+    ("next_page", "total_pages", "pages"),
+    [
+        pytest.param(
+            None,
+            3,
+            {},
+            id="premature-end",
+        ),
+        pytest.param(
+            3,
+            3,
+            {
+                3: envelope(
+                    [record("CUST-7")],
+                    page=3,
+                    page_size=3,
+                    total=7,
+                    total_pages=3,
+                    next_page=None,
+                )
+            },
+            id="skipped-page",
+        ),
+    ],
+)
+def test_cursor_must_match_the_next_expected_page(next_page, total_pages, pages):
+    responses = {
+        1: envelope(
+            [record("CUST-1"), record("CUST-2"), record("CUST-3")],
+            page=1,
+            page_size=3,
+            total=7,
+            total_pages=total_pages,
+            next_page=next_page,
+        ),
+        **pages,
+    }
+
+    with pytest.raises(CrmClientError):
+        CrmClient(BASE_URL, transport=serve(responses, [])).fetch_customers()
+
+
+def test_page_metadata_cannot_change_mid_collection():
+    pages = {
+        1: envelope(
+            [record("CUST-1"), record("CUST-2"), record("CUST-3")],
+            page=1,
+            page_size=3,
+            total=6,
+            total_pages=2,
+            next_page=2,
+        ),
+        2: envelope(
+            [record("CUST-4"), record("CUST-5"), record("CUST-6")],
+            page=2,
+            page_size=3,
+            total=7,
+            total_pages=3,
+            next_page=3,
+        ),
+    }
+
+    with pytest.raises(CrmClientError):
+        CrmClient(BASE_URL, transport=serve(pages, [])).fetch_customers()
+
+
+def test_collected_row_count_must_match_the_reported_total():
+    pages = {
+        1: envelope(
+            [record("CUST-1"), record("CUST-2"), record("CUST-3")],
+            page=1,
+            page_size=3,
+            total=4,
+            total_pages=2,
+            next_page=2,
+        ),
+        2: envelope(
+            [],
+            page=2,
+            page_size=3,
+            total=4,
+            total_pages=2,
+            next_page=None,
+        ),
+    }
+
+    with pytest.raises(CrmClientError):
+        CrmClient(BASE_URL, transport=serve(pages, [])).fetch_customers()
+
+
+def test_source_cannot_claim_an_unbounded_number_of_pages():
+    pages = {
+        1: envelope(
+            [record("CUST-1")],
+            page=1,
+            page_size=3,
+            total=30_003,
+            total_pages=10_001,
+            next_page=None,
+        )
+    }
+
+    with pytest.raises(CrmClientError):
+        CrmClient(BASE_URL, transport=serve(pages, [])).fetch_customers()
+
+
 @pytest.mark.parametrize("page_size", [0, -1, 101])
 def test_page_size_must_be_bounded(page_size):
     with pytest.raises(ValueError):

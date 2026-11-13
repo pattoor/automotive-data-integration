@@ -14,6 +14,7 @@ collection makes cross-page duplicate counting exact, and the alternative
 
 from __future__ import annotations
 
+from math import ceil
 from typing import Any
 
 import httpx
@@ -21,6 +22,7 @@ from pydantic import BaseModel, Field
 
 DEFAULT_PAGE_SIZE = 3
 MAX_PAGE_SIZE = 100
+MAX_PAGES_PER_COLLECTION = 10_000
 DEFAULT_TIMEOUT_SECONDS = 5.0
 
 
@@ -77,28 +79,80 @@ class CrmClient:
 
     def _fetch_collection(self, path: str) -> list[dict[str, Any]]:
         records: list[dict[str, Any]] = []
-        page: int | None = 1
+        page = 1
+        expected_total: int | None = None
+        expected_total_pages: int | None = None
         with httpx.Client(
             base_url=self._base_url,
             timeout=self._timeout,
             transport=self._transport,
         ) as client:
-            while page is not None:
+            while True:
                 envelope = self._get_page(client, path, page)
                 if envelope.page != page:
                     raise CrmClientError(
                         f"crm-api returned page {envelope.page} while page {page} "
                         f"was requested for {path}"
                     )
+                if envelope.page_size != self._page_size:
+                    raise CrmClientError(
+                        f"crm-api returned page_size {envelope.page_size} instead "
+                        f"of {self._page_size} for {path}"
+                    )
+                calculated_pages = ceil(envelope.total / self._page_size)
+                if envelope.total_pages != calculated_pages:
+                    raise CrmClientError(
+                        f"crm-api returned inconsistent total_pages for {path}"
+                    )
+                if envelope.total_pages > MAX_PAGES_PER_COLLECTION:
+                    raise CrmClientError(
+                        f"crm-api collection {path} exceeds the page limit "
+                        f"({MAX_PAGES_PER_COLLECTION})"
+                    )
+
+                if expected_total is None:
+                    expected_total = envelope.total
+                    expected_total_pages = envelope.total_pages
+                elif (
+                    envelope.total != expected_total
+                    or envelope.total_pages != expected_total_pages
+                ):
+                    raise CrmClientError(
+                        f"crm-api pagination metadata changed while reading {path}"
+                    )
+
+                if envelope.total == 0:
+                    if page != 1 or envelope.items or envelope.next_page is not None:
+                        raise CrmClientError(
+                            f"crm-api returned inconsistent empty pagination for {path}"
+                        )
+                    return []
+                if page > envelope.total_pages:
+                    raise CrmClientError(
+                        f"crm-api returned page {page} beyond total_pages for {path}"
+                    )
+                if len(envelope.items) > self._page_size:
+                    raise CrmClientError(
+                        f"crm-api returned more items than page_size for {path}"
+                    )
+
                 records.extend(envelope.items)
 
-                next_page = envelope.next_page
-                if next_page is not None and next_page <= page:
+                expected_next_page = page + 1 if page < envelope.total_pages else None
+                if envelope.next_page != expected_next_page:
                     raise CrmClientError(
-                        f"crm-api returned a repeated or non-progressing page "
-                        f"cursor {next_page} for {path}"
+                        f"crm-api returned an inconsistent pagination cursor for {path}"
                     )
-                page = next_page
+
+                if expected_next_page is None:
+                    break
+                page = expected_next_page
+
+        if expected_total is not None and len(records) != expected_total:
+            raise CrmClientError(
+                f"crm-api returned {len(records)} rows but reported "
+                f"{expected_total} total for {path}"
+            )
         return records
 
     def _get_page(
