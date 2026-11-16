@@ -17,16 +17,16 @@ Build a working single-host demo in small, independently testable stages. Do not
 
 ## Acceptance criteria
 
-- [ ] A clean checkout can start the synthetic CRM, pipeline API, PostgreSQL, and n8n with Docker Compose.
+- [x] A clean checkout can start the synthetic CRM, pipeline API, PostgreSQL, and n8n with Docker Compose.
 - [x] n8n supports manual execution and defines a daily schedule; automatic scheduled runs are optional and intentionally disabled for this practice setup.
-- [ ] CRM pagination is fully consumed and valid customers, vehicles, and sales are persisted.
-- [ ] Invalid synthetic records are rejected with their payload and reason recorded.
-- [ ] Two executions do not increase entity row counts or create duplicate CRM IDs.
-- [ ] Each run has a queryable status and counts; logs are useful without leaking secrets.
-- [ ] Tests cover malformed input and idempotency; CI runs the automated checks.
-- [ ] `.env.example` documents configuration while `.env` and real secrets remain untracked.
-- [ ] Persistent project data uses project-relative bind mounts (`./.data/postgres` for PostgreSQL and `./n8n/data` for n8n), not named volumes, and survives `docker compose down`.
-- [ ] Documentation lets a student explain service boundaries, data flow, failure handling, and trade-offs in an interview.
+- [x] CRM pagination is fully consumed and valid customers, vehicles, and sales are persisted.
+- [x] Invalid synthetic records are rejected with their payload and reason recorded.
+- [x] Two executions do not increase entity row counts or create duplicate CRM IDs.
+- [x] Each run has a queryable status and counts; logs are useful without leaking secrets.
+- [x] Tests cover malformed input and idempotency; CI runs the automated checks.
+- [x] `.env.example` documents configuration while `.env` and real secrets remain untracked.
+- [x] Persistent project data uses project-relative bind mounts (`./.data/postgres` for PostgreSQL and `./n8n/data` for n8n), not named volumes, and survives `docker compose down`.
+- [x] Documentation lets a student explain service boundaries, data flow, failure handling, and trade-offs in an interview.
 
 ## Working rules
 
@@ -60,3 +60,4 @@ Build a working single-host demo in small, independently testable stages. Do not
 - [x] Stage 6 Compose smoke subcomponent: on G7, `docker compose exec -T -e COMPOSE_SMOKE_TEST=1 pipeline-api pytest tests/test_compose_smoke.py -rs` reported 3 passed (two response-helper checks plus two live HTTP runs in one integration test). The complete in-container suite reported 102 passed, 2 skipped. Customer, vehicle, and sale tables each remain at 5 rows with 5 distinct CRM IDs; the smoke test removed only its own run rows.
 - [x] Stage 6 GitHub Actions CI: `.github/workflows/ci.yml` runs on push and pull request with `contents: read`, Python 3.13 host tests and dependency checks, Compose config validation, a full Compose build/start, the in-container suite, the explicit `COMPOSE_SMOKE_TEST=1` live HTTP test, and a non-destructive `docker compose down`. Hosted run 43464143774 for commit `e700d3e` completed successfully with all 12 steps green in about two minutes.
 - [x] Stage 6 portfolio documentation: `docs/DATA_DICTIONARY.md` covers the CRM-to-normalized mapping and all five tables (39 columns, constraints, relationships, count semantics); `docs/SQL_EXAMPLES.md` provides read-only inspection queries; `docs/TROUBLESHOOTING.md` provides safe symptom→check→action guidance; `README.md` adds a documentation index and `docs/ARCHITECTURE.md` links the references while keeping its decision matrix as the single source. Verified live on G7 against the current schema: the count query returned 5 rows/5 distinct IDs per entity, recent runs showed run 11 `succeeded` with `17/15/1/1`, and the latest-run summary reported `stored_rejections = 1`; all four queries were read-only.
+- [x] Project closure (2026-11-16): all acceptance criteria above are verified, the README and reference docs are complete, and `.env`, project data, and the personal study DOCX remain untracked. Runtime services were stopped with `docker compose down`; bind-mounted data under `./.data/postgres` and `./n8n/data` was preserved.

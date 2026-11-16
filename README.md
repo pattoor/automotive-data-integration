@@ -1,8 +1,8 @@
 # Automotive Data Integration
 
-A staged, auditable data-automation portfolio project using synthetic dealership data. Its target architecture combines a mock CRM API, pipeline API, PostgreSQL, and n8n on one Docker Compose host; current implementation status is tracked by stage below and in `docs/ROADMAP.md`.
+A completed, auditable data-automation portfolio project using synthetic dealership data. Its architecture combines a mock CRM API, pipeline API, PostgreSQL, and n8n on one Docker Compose host; implementation status and verification evidence are tracked by stage in `docs/ROADMAP.md`.
 
-The repository is one Python codebase with **two FastAPI processes**. Stage 0 delivered the runnable foundation: package skeleton, health endpoints, container image, Compose services, and tests. Stage 1 adds deterministic synthetic CRM data with bounded pagination; Stage 2 adds Pydantic contracts and pure batch transforms that normalize and quarantine records; Stage 3 adds the PostgreSQL schema and repository that persist entities, run summaries, and rejected payloads; Stage 4 adds the paginated CRM client, the orchestration service, and `POST /pipeline/runs`; Stage 5 adds the pinned n8n service and a versioned workflow with a manual trigger and a daily schedule (see `docs/ROADMAP.md`).
+The repository is one Python codebase with **two FastAPI processes**. Stage 0 delivered the runnable foundation: package skeleton, health endpoints, container image, Compose services, and tests. Stage 1 adds deterministic synthetic CRM data with bounded pagination; Stage 2 adds Pydantic contracts and pure batch transforms that normalize and quarantine records; Stage 3 adds the PostgreSQL schema and repository that persist entities, run summaries, and rejected payloads; Stage 4 adds the paginated CRM client, the orchestration service, and `POST /pipeline/runs`; Stage 5 adds the pinned n8n service and a versioned workflow with a manual trigger and a daily schedule; Stage 6 completes the delivery with a Compose-backed smoke test, a GitHub Actions workflow, and the reference documentation under `docs/` (see `docs/ROADMAP.md`).
 
 ## Layout
 
