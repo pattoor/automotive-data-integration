@@ -1,8 +1,16 @@
 # Automotive Data Integration
 
+[![CI](https://github.com/pattoor/automotive-data-integration/actions/workflows/ci.yml/badge.svg)](https://github.com/pattoor/automotive-data-integration/actions/workflows/ci.yml)
+
 A completed, auditable data-automation portfolio project using synthetic dealership data. Its architecture combines a mock CRM API, pipeline API, PostgreSQL, and n8n on one Docker Compose host; implementation status and verification evidence are tracked by stage in `docs/ROADMAP.md`.
 
 The repository is one Python codebase with **two FastAPI processes**. Stage 0 delivered the runnable foundation: package skeleton, health endpoints, container image, Compose services, and tests. Stage 1 adds deterministic synthetic CRM data with bounded pagination; Stage 2 adds Pydantic contracts and pure batch transforms that normalize and quarantine records; Stage 3 adds the PostgreSQL schema and repository that persist entities, run summaries, and rejected payloads; Stage 4 adds the paginated CRM client, the orchestration service, and `POST /pipeline/runs`; Stage 5 adds the pinned n8n service and a versioned workflow with a manual trigger and a daily schedule; Stage 6 completes the delivery with a Compose-backed smoke test, a GitHub Actions workflow, and the reference documentation under `docs/` (see `docs/ROADMAP.md`).
+
+## Architecture at a glance
+
+![Architecture: n8n triggers the pipeline API, which extracts paginated data from the mock CRM API, validates it, and persists entities, runs, and rejections to PostgreSQL.](docs/images/architecture.svg)
+
+n8n only schedules and calls `POST /pipeline/runs`; extraction, normalization, validation, persistence, and run bookkeeping stay in `pipeline-api`. See [Architecture](docs/ARCHITECTURE.md) for the service boundaries and the decision matrix behind each trade-off.
 
 ## Layout
 
@@ -17,6 +25,8 @@ The repository is one Python codebase with **two FastAPI processes**. Stage 0 de
 | `docs/DATA_DICTIONARY.md` | CRM field mapping, normalization rules, and all five table definitions |
 | `docs/SQL_EXAMPLES.md` | Read-only `SELECT` queries for counts, runs, and rejections |
 | `docs/TROUBLESHOOTING.md` | Symptom → safe check → action guide for Compose, API, tests, and n8n |
+| `docs/ENGINEERING_WORKFLOW.md` | How changes were scoped, delegated, reviewed, and verified, including the agent role boundaries |
+| `docs/images/architecture.svg` | Architecture diagram used in this README; `architecture.png` is the 2× export for slides and social posts |
 | `tests/` | API and transform tests with FastAPI `TestClient`; PostgreSQL integration tests skip without a database URL; n8n workflow contract test |
 | `compose.yaml` | Two APIs plus PostgreSQL (`postgres:16-alpine`) and n8n (`n8nio/n8n:2.47.7`) |
 | `Dockerfile` | One image, one package, two startup commands |
@@ -30,6 +40,7 @@ The repository is one Python codebase with **two FastAPI processes**. Stage 0 de
 - [Data dictionary](docs/DATA_DICTIONARY.md) — CRM-to-normalized field mapping, all five PostgreSQL tables, constraints, relationships, and the exact `fetched`/`accepted`/`rejected`/`duplicate` definitions.
 - [SQL examples](docs/SQL_EXAMPLES.md) — read-only queries for row counts, recent runs, rejections, and the latest run, run through `docker compose exec`.
 - [Troubleshooting](docs/TROUBLESHOOTING.md) — symptom → safe check → action for unhealthy services, 502/503 responses, skipped database tests, and n8n access.
+- [Engineering workflow](docs/ENGINEERING_WORKFLOW.md) — how work was scoped, delegated, reviewed, and verified, including the one-writer rule and the human approval gates.
 
 ## Requirements
 
