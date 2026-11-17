@@ -14,6 +14,8 @@ htmlcov/
 n8n/data/
 .data/
 .backups/
+# Local screenshot scratch space
+/src/img/
 .atl/
 .opencode/skills/g7-project-access/
 *.log

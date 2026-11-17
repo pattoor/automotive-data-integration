@@ -15,4 +15,5 @@ htmlcov
 .atl
 .opencode
 docs
+src/img
 *.log

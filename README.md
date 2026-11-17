@@ -451,3 +451,7 @@ Docker image layers, container writable layers/logs, build cache, and network me
 - Duplicate detection compares trimmed CRM identifiers case-sensitively within one supplied batch; cross-run duplicates are handled by the PostgreSQL uniqueness constraint and UPSERT.
 - Relationship validation checks that parents exist and were accepted in the same run. It does not check that a sale's vehicle belongs to the sale's customer; the fixtures satisfy that rule, and enforcing it would be an additional cross-record policy beyond this stage.
 - Schema changes are manual: there is no migration runner yet, so an existing database only changes when an explicit migration file is applied.
+
+## License
+
+Released under the [MIT License](LICENSE). The synthetic data, the architecture diagram under `docs/images/`, and the documentation are part of the same release. The fixtures are invented for demonstration and do not describe real people, vehicles, or transactions.
